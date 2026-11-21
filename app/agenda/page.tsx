@@ -1,13 +1,16 @@
-export default function PanelAgenda() {
+import { supabase } from '@/lib/supabase';
+import AgendaClient from '@/components/AgendaClient';
+
+export default async function PaginaAgenda() {
+  const [{ data: visitas }, { data: proyectos }] = await Promise.all([
+    supabase.from('visitas').select('*').order('fecha', { ascending: true }),
+    supabase.from('proyectos').select('id, codigo, nombre, estado, entrega_estimada'),
+  ]);
+
   return (
-    <div className="min-h-screen bg-[#121212] text-white p-8 font-sans">
-      <header className="mb-8 border-b border-gray-800 pb-4">
-        <h1 className="text-3xl font-bold text-orange-500 mb-2">Visitas y Agenda</h1>
-        <p className="text-gray-400">Calendario de obra y reuniones de equipo.</p>
-      </header>
-      <div className="bg-[#1A1A1A] rounded-xl border border-gray-800 p-8 text-center text-gray-500 shadow-xl">
-        Aquí irá el calendario interactivo.
-      </div>
-    </div>
+    <AgendaClient
+      visitasIniciales={visitas || []}
+      proyectos={proyectos || []}
+    />
   );
 }
