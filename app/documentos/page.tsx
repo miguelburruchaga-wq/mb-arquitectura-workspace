@@ -1,13 +1,38 @@
-export default function PanelDocumentos() {
+import { Suspense } from 'react';
+import { supabase } from '@/lib/supabase';
+import DocumentosClient from '@/components/DocumentosClient';
+
+async function ContenidoDocumentos() {
+  const [{ data: documentos }, { data: proyectos }] = await Promise.all([
+    supabase
+      .from('documentos')
+      .select('*')
+      .order('fecha_emision', { ascending: false })
+      .order('created_at', { ascending: false }),
+    supabase
+      .from('proyectos')
+      .select('id, codigo, nombre, estado')
+      .order('created_at', { ascending: false }),
+  ]);
+
   return (
-    <div className="min-h-screen bg-[#121212] text-white p-8 font-sans">
-      <header className="mb-8 border-b border-gray-800 pb-4">
-        <h1 className="text-3xl font-bold text-orange-500 mb-2">Documentos</h1>
-        <p className="text-gray-400">Planos, contratos y archivos adjuntos.</p>
-      </header>
-      <div className="bg-[#1A1A1A] rounded-xl border border-gray-800 p-8 text-center text-gray-500 shadow-xl">
-        Aquí conectaremos el almacenamiento de archivos.
-      </div>
-    </div>
+    <DocumentosClient
+      documentosIniciales={documentos || []}
+      proyectos={proyectos || []}
+    />
+  );
+}
+
+export default function PaginaDocumentos() {
+  return (
+    <Suspense
+      fallback={
+        <div className="min-h-screen bg-[#121212] text-gray-400 p-8">
+          Cargando documentos y planos...
+        </div>
+      }
+    >
+      <ContenidoDocumentos />
+    </Suspense>
   );
 }

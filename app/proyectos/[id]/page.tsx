@@ -1,20 +1,19 @@
+import { Suspense } from 'react';
 import Link from 'next/link';
 import { supabase } from '@/lib/supabase';
 import { AlertTriangle } from 'lucide-react';
 import FichaProyectoClient from '@/components/FichaProyectoClient';
 
-export default async function FichaProyectoPage({
-  params,
-}: {
-  params: Promise<{ id: string }>;
-}) {
+async function ContenidoFichaProyecto({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   const proyectoCodigo = decodeURIComponent(id);
 
-  const [{ data: proyecto, error }, { data: clientes }] = await Promise.all([
-    supabase.from('proyectos').select('*').eq('codigo', proyectoCodigo).limit(1).single(),
-    supabase.from('clientes').select('id, codigo, nombre, tipo, estado').order('nombre', { ascending: true }),
-  ]);
+  const { data: proyecto, error } = await supabase
+    .from('proyectos')
+    .select('*')
+    .eq('codigo', proyectoCodigo)
+    .limit(1)
+    .single();
 
   if (error || !proyecto) {
     return (
@@ -34,31 +33,94 @@ export default async function FichaProyectoPage({
     );
   }
 
-  // Traer movimientos del proyecto (por proyecto o por cliente) y visitas del proyecto
-  const [{ data: movimientos }, { data: visitas }] = await Promise.all([
+  const etiquetaProyecto = `${proyecto.codigo} · ${proyecto.nombre}`;
+
+  const [
+    { data: clientes },
+    { data: todosMovimientos },
+    { data: visitas },
+    { data: tareas },
+    { data: compras },
+    { data: proveedores },
+    { data: equipo },
+    { data: documentos },
+  ] = await Promise.all([
+    supabase
+      .from('clientes')
+      .select('id, codigo, nombre, tipo, estado')
+      .order('nombre', { ascending: true }),
     supabase
       .from('movimientos')
       .select('*')
-      .or(
-        proyecto.cliente_id
-          ? `proyecto.ilike.%${proyecto.codigo}%,cliente_id.eq.${proyecto.cliente_id}` : `proyecto.ilike.\%${proyecto.codigo}%`
-      )
       .order('fecha', { ascending: false })
       .order('created_at', { ascending: false }),
     supabase
       .from('visitas')
       .select('*')
       .eq('proyecto_codigo', proyecto.codigo)
-      .order('fecha', { ascending: true })
-      .order('horario', { ascending: true }),
+      .order('fecha', { ascending: true }),
+    supabase
+      .from('tareas')
+      .select('*')
+      .eq('proyecto_codigo', proyecto.codigo)
+      .order('created_at', { ascending: false }),
+    supabase
+      .from('compras')
+      .select('*')
+      .eq('proyecto_codigo', proyecto.codigo)
+      .order('created_at', { ascending: false }),
+    supabase
+      .from('proveedores')
+      .select('id, codigo, nombre, rubro')
+      .order('nombre', { ascending: true }),
+    supabase.from('equipo').select('*').order('id', { ascending: true }),
+    supabase
+      .from('documentos')
+      .select('*')
+      .eq('proyecto_codigo', proyecto.codigo)
+      .order('fecha_emision', { ascending: false })
+      .order('created_at', { ascending: false }),
   ]);
+
+  const movimientosProyecto = (todosMovimientos || []).filter((m) => {
+    const porProyecto =
+      m.proyecto_codigo === proyecto.codigo ||
+      m.proyecto === etiquetaProyecto ||
+      m.proyecto === proyecto.nombre ||
+      m.proyecto === proyecto.codigo;
+    const porCliente = proyecto.cliente_id && String(m.cliente_id) === String(proyecto.cliente_id);
+    return porProyecto || porCliente;
+  });
 
   return (
     <FichaProyectoClient
       proyecto={proyecto}
       clientes={clientes || []}
-      movimientos={movimientos || []}
+      movimientos={movimientosProyecto}
       visitas={visitas || []}
+      tareas={tareas || []}
+      compras={compras || []}
+      proveedores={proveedores || []}
+      equipo={equipo || []}
+      documentos={documentos || []}
     />
+  );
+}
+
+export default function FichaProyectoPage({
+  params,
+}: {
+  params: Promise<{ id: string }>;
+}) {
+  return (
+    <Suspense
+      fallback={
+        <div className="min-h-screen bg-[#121212] text-gray-400 p-8">
+          Cargando proyecto...
+        </div>
+      }
+    >
+      <ContenidoFichaProyecto params={params} />
+    </Suspense>
   );
 }

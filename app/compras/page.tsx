@@ -1,13 +1,39 @@
-export default function PanelCompras() {
+import { Suspense } from 'react';
+import { supabase } from '@/lib/supabase';
+import ComprasClient from '@/components/ComprasClient';
+
+async function ContenidoCompras() {
+  const [{ data: compras }, { data: proyectos }, { data: proveedores }] = await Promise.all([
+    supabase.from('compras').select('*').order('created_at', { ascending: false }),
+    supabase
+      .from('proyectos')
+      .select('id, codigo, nombre, estado, cliente_id')
+      .order('created_at', { ascending: false }),
+    supabase
+      .from('proveedores')
+      .select('id, codigo, nombre, rubro')
+      .order('nombre', { ascending: true }),
+  ]);
+
   return (
-    <div className="min-h-screen bg-[#121212] text-white p-8 font-sans">
-      <header className="mb-8 border-b border-gray-800 pb-4">
-        <h1 className="text-3xl font-bold text-orange-500 mb-2">Compras y Pedidos</h1>
-        <p className="text-gray-400">Control de proveedores y materiales.</p>
-      </header>
-      <div className="bg-[#1A1A1A] rounded-xl border border-gray-800 p-8 text-center text-gray-500 shadow-xl">
-        Aquí gestionaremos las órdenes de compra.
-      </div>
-    </div>
+    <ComprasClient
+      comprasIniciales={compras || []}
+      proyectos={proyectos || []}
+      proveedores={proveedores || []}
+    />
+  );
+}
+
+export default function PaginaCompras() {
+  return (
+    <Suspense
+      fallback={
+        <div className="min-h-screen bg-[#121212] text-gray-400 p-8">
+          Cargando compras...
+        </div>
+      }
+    >
+      <ContenidoCompras />
+    </Suspense>
   );
 }

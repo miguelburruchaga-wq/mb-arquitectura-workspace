@@ -1,26 +1,133 @@
 @import "tailwindcss";
 
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --accent: #EAB308;
+  --accent-hover: #CA9A04;
 }
 
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+/* 1. Tamaño de letra ampliado */
+html[data-font="grande"] {
+  font-size: 18px;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+/* 2. Paletas de colores (solo afecta botones sólidos, NO los /10 o /15) */
+html[data-paleta="pastel"] {
+  --accent: #D86B8A;
+  --accent-hover: #C05574;
 }
 
-body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+html[data-paleta="madera"] {
+  --accent: #B4723C;
+  --accent-hover: #965B2B;
+}
+
+html[data-paleta="pastel"] [class*="bg-[#EAB308]"]:not([class*="bg-[#EAB308]/"]),
+html[data-paleta="madera"] [class*="bg-[#EAB308]"]:not([class*="bg-[#EAB308]/"]) {
+  background-color: var(--accent) !important;
+  color: #ffffff !important;
+}
+
+html[data-paleta="pastel"] [class*="text-[#EAB308]"],
+html[data-paleta="madera"] [class*="text-[#EAB308]"] {
+  color: var(--accent) !important;
+}
+
+html[data-paleta="pastel"] [class*="border-[#EAB308]"],
+html[data-paleta="madera"] [class*="border-[#EAB308]"] {
+  border-color: var(--accent) !important;
+}
+
+/* 3. Modo Claro */
+html[data-theme="claro"],
+html[data-theme="claro"] body {
+  background-color: #EFECE6 !important;
+  color: #18181B !important;
+}
+
+/* Barra lateral (Sidebar) en Modo Claro según paleta */
+html[data-theme="claro"] aside {
+  background-color: #F7F5F0 !important;
+  border-color: #DFDAD2 !important;
+  color: #18181B !important;
+}
+
+html[data-theme="claro"][data-paleta="pastel"] aside {
+  background-color: #F5E1E7 !important;
+  border-color: #E7C8D2 !important;
+}
+
+html[data-theme="claro"][data-paleta="madera"] aside {
+  background-color: #EFE6DC !important;
+  border-color: #DFCBB8 !important;
+}
+
+/* Fondos principales y tarjetas en Modo Claro */
+html[data-theme="claro"] [class*="bg-[#121212]"],
+html[data-theme="claro"] [class*="bg-[#101010]"],
+html[data-theme="claro"] [class*="bg-[#0F0F0F]"],
+html[data-theme="claro"] [class*="bg-[#111111]"] {
+  background-color: #EFECE6 !important;
+  color: #18181B !important;
+}
+
+html[data-theme="claro"] [class*="bg-[#141414]"],
+html[data-theme="claro"] [class*="bg-[#161616]"],
+html[data-theme="claro"] [class*="bg-[#10141B]"],
+html[data-theme="claro"] [class*="bg-[#181818]"] {
+  background-color: #E6E2DA !important;
+  color: #18181B !important;
+}
+
+html[data-theme="claro"] [class*="bg-[#1A1A1A]"],
+html[data-theme="claro"] [class*="bg-[#181B22]"],
+html[data-theme="claro"] [class*="bg-[#1F1F1F]"] {
+  background-color: #FFFFFF !important;
+  color: #18181B !important;
+}
+
+/* Textos en Modo Claro */
+html[data-theme="claro"] .text-white {
+  color: #18181B !important;
+}
+
+html[data-theme="claro"] .text-gray-200,
+html[data-theme="claro"] .text-gray-300 {
+  color: #3F3F46 !important;
+}
+
+html[data-theme="claro"] .text-gray-400 {
+  color: #57534E !important;
+}
+
+/* Mantener texto blanco dentro de banners con foto y botones con acento sólido */
+html[data-theme="claro"] .bg-cover .text-white,
+html[data-theme="claro"] [class*="bg-black/"] .text-white,
+html[data-theme="claro"] [class*="bg-black/"] {
+  color: #FFFFFF !important;
+}
+
+html[data-theme="claro"][data-paleta="pastel"] [class*="bg-[#EAB308]"]:not([class*="bg-[#EAB308]/"]),
+html[data-theme="claro"][data-paleta="madera"] [class*="bg-[#EAB308]"]:not([class*="bg-[#EAB308]/"]) {
+  color: #FFFFFF !important;
+}
+
+/* Bordes y hover en Modo Claro */
+html[data-theme="claro"] [class*="border-gray-800"],
+html[data-theme="claro"] [class*="border-gray-700"] {
+  border-color: #D6D1C9 !important;
+}
+
+html[data-theme="claro"] [class*="hover:bg-gray-800"]:hover,
+html[data-theme="claro"] [class*="hover:bg-[#202020]"]:hover,
+html[data-theme="claro"] [class*="hover:bg-[#222630]"]:hover {
+  background-color: #EAE6DF !important;
+}
+/* Fondo global visible en todas las secciones */
+html[data-con-fondo="true"] main > div {
+  background-color: transparent !important;
+}
+
+html[data-con-fondo="true"] header {
+  background-color: rgba(18, 18, 18, 0.78) !important;
+  backdrop-filter: blur(12px);
 }

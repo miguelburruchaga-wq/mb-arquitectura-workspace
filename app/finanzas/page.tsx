@@ -1,13 +1,53 @@
-export default function PanelFinanzas() {
+import { Suspense } from 'react';
+import { supabase } from '@/lib/supabase';
+import FinanzasClient from '@/components/FinanzasClient';
+
+async function ContenidoFinanzas() {
+  const [
+    { data: movimientos },
+    { data: proyectos },
+    { data: clientes },
+    { data: proveedores },
+  ] = await Promise.all([
+    supabase
+      .from('movimientos')
+      .select('*')
+      .order('fecha', { ascending: false })
+      .order('created_at', { ascending: false }),
+    supabase
+      .from('proyectos')
+      .select('id, codigo, nombre, estado, cliente_id')
+      .order('created_at', { ascending: false }),
+    supabase
+      .from('clientes')
+      .select('id, codigo, nombre')
+      .order('nombre', { ascending: true }),
+    supabase
+      .from('proveedores')
+      .select('id, codigo, nombre, rubro')
+      .order('nombre', { ascending: true }),
+  ]);
+
   return (
-    <div className="min-h-screen bg-[#121212] text-white p-8 font-sans">
-      <header className="mb-8 border-b border-gray-800 pb-4">
-        <h1 className="text-3xl font-bold text-orange-500 mb-2">Finanzas</h1>
-        <p className="text-gray-400">Presupuestos, pagos y flujo de caja.</p>
-      </header>
-      <div className="bg-[#1A1A1A] rounded-xl border border-gray-800 p-8 text-center text-gray-500 shadow-xl">
-        Aquí visualizaremos los reportes financieros.
-      </div>
-    </div>
+    <FinanzasClient
+      movimientosIniciales={movimientos || []}
+      proyectos={proyectos || []}
+      clientes={clientes || []}
+      proveedores={proveedores || []}
+    />
+  );
+}
+
+export default function PaginaFinanzas() {
+  return (
+    <Suspense
+      fallback={
+        <div className="min-h-screen bg-[#121212] text-gray-400 p-8">
+          Cargando finanzas...
+        </div>
+      }
+    >
+      <ContenidoFinanzas />
+    </Suspense>
   );
 }
