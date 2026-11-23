@@ -7,8 +7,6 @@ import FondoGlobalApp from '@/components/FondoGlobalApp';
 import AuthGate from '@/components/AuthGate';
 import { PreferenciasProvider } from '@/components/PreferenciasProvider';
 
-export const dynamic = 'force-dynamic';
-
 const inter = Inter({ subsets: ['latin'] });
 
 export const metadata: Metadata = {

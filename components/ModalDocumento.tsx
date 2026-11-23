@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useRef } from 'react';
 import { supabase } from '@/lib/supabase';
+import { moverAPapelera } from '@/lib/papelera';
 import { X, Upload, ChevronDown, Trash2, Loader2 } from 'lucide-react';
 
 export const CATEGORIAS_DOCUMENTOS = [
@@ -199,14 +200,22 @@ export default function ModalDocumento({
   const eliminarDocumento = async () => {
     if (!docEditando) return;
     setCargando(true);
-    const { error } = await supabase.from('documentos').delete().eq('id', docEditando.id);
-    setCargando(false);
-
-    if (!error) {
+    try {
+      await moverAPapelera({
+        tabla: 'documentos',
+        modulo: 'Documentos',
+        titulo: docEditando.titulo || 'Documento sin título',
+        subtitulo: `${docEditando.codigo_lamina || docEditando.categoria || ''} ${
+          docEditando.proyecto_nombre ? `· ${docEditando.proyecto_nombre}` : ''
+        }`.trim(),
+        registro: docEditando,
+      });
       onClose();
-      onGuardado('Documento eliminado');
-    } else {
-      alert('Error al eliminar documento: ' + error.message);
+      onGuardado('Documento enviado a papelera');
+    } catch (error: any) {
+      alert('Error al mover a papelera: ' + error.message);
+    } finally {
+      setCargando(false);
     }
   };
 
@@ -527,7 +536,7 @@ export default function ModalDocumento({
                   disabled={cargando}
                   className="text-red-500 hover:bg-red-500/15 px-3.5 py-2 rounded-lg text-xs font-semibold inline-flex items-center gap-1.5 cursor-pointer"
                 >
-                  <Trash2 className="w-4 h-4" /> Eliminar
+                  <Trash2 className="w-4 h-4" /> Enviar a papelera
                 </button>
               )}
             </div>

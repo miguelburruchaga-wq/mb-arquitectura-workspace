@@ -6,6 +6,7 @@ import { usePathname } from 'next/navigation';
 import { usePreferencias } from '@/components/PreferenciasProvider';
 import { useAuth } from '@/components/AuthGate';
 import ModalAjustesEstudio from '@/components/ModalAjustesEstudio';
+import { obtenerCantidadPapelera } from '@/lib/papelera';
 import {
   LayoutGrid,
   Users,
@@ -29,6 +30,17 @@ export default function Sidebar() {
   const [logoUrl, setLogoUrl] = useState('');
   const [nombreEstudio, setNombreEstudio] = useState('MB Arquitectura SA');
   const [modalAjustes, setModalAjustes] = useState(false);
+  const [cantidadPapelera, setCantidadPapelera] = useState(0);
+
+  useEffect(() => {
+    const actualizarPapelera = async () => {
+      const total = await obtenerCantidadPapelera();
+      setCantidadPapelera(total);
+    };
+    actualizarPapelera();
+    window.addEventListener('mb_papelera_updated', actualizarPapelera);
+    return () => window.removeEventListener('mb_papelera_updated', actualizarPapelera);
+  }, []);
 
   useEffect(() => {
     const leerDatosEstudio = () => {
@@ -139,7 +151,7 @@ export default function Sidebar() {
               <span>{tr('papelera')}</span>
             </span>
             <span className="w-5 h-5 rounded-full bg-rose-950/90 border border-rose-800/60 text-rose-400 text-[10px] font-extrabold flex items-center justify-center">
-              0
+              {cantidadPapelera}
             </span>
           </Link>
 

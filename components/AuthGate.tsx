@@ -23,6 +23,11 @@ export interface UsuarioSesion {
   foto_url?: string;
 }
 
+interface RegistroEquipoAuth extends UsuarioSesion {
+  estado?: string;
+  password?: string;
+}
+
 interface AuthContextType {
   usuario: UsuarioSesion | null;
   cerrarSesion: () => void;
@@ -53,13 +58,17 @@ export default function AuthGate({ children }: { children: React.ReactNode }) {
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [okMsg, setOkMsg] = useState<string | null>(null);
 
-  const verificarCorreoAutorizado = async (correoIngresado: string, fotoGoogle?: string) => {
+  const verificarCorreoAutorizado = async (
+    correoIngresado: string,
+    fotoGoogle?: string
+  ): Promise<{ autorizado: boolean; motivo?: string; registro?: RegistroEquipoAuth }> => {
     const limpio = correoIngresado.trim().toLowerCase();
 
     const { data: listaEquipo } = await supabase
       .from('equipo')
-      .select('*')
-      .ilike('email', limpio);
+      .select('id, nombre, email, rol, tipo_acceso, estado, foto_url, password')
+      .ilike('email', limpio)
+      .limit(1);
 
     const encontrado = listaEquipo?.[0];
 
@@ -67,9 +76,8 @@ export default function AuthGate({ children }: { children: React.ReactNode }) {
       if (String(encontrado.estado || '').toLowerCase() === 'suspendido') {
         return { autorizado: false, motivo: 'Tu usuario se encuentra suspendido por el titular.' };
       }
-      // Si entró con Google y no tenía foto guardada, actualizamos su foto
       if (fotoGoogle && !encontrado.foto_url && encontrado.id) {
-        await supabase.from('equipo').update({ foto_url: fotoGoogle }).eq('id', encontrado.id);
+        supabase.from('equipo').update({ foto_url: fotoGoogle }).eq('id', encontrado.id).then(() => {});
       }
       return {
         autorizado: true,
@@ -124,7 +132,16 @@ export default function AuthGate({ children }: { children: React.ReactNode }) {
 
     const inicializar = async () => {
       try {
-        // 1. Revisar si acaba de volver del selector de cuentas de Google (OAuth)
+        const saved = localStorage.getItem('mb_sesion_usuario');
+        if (saved && activo) {
+          setUsuario(JSON.parse(saved));
+          setVerificando(false);
+        }
+
+        const params = new URLSearchParams(window.location.search);
+        const inv = params.get('invitado');
+        if (inv && activo) setEmail(inv);
+
         const {
           data: { session },
         } = await supabase.auth.getSession();
@@ -137,7 +154,7 @@ export default function AuthGate({ children }: { children: React.ReactNode }) {
           if (check.autorizado && check.registro) {
             const reg = check.registro;
             if (reg.id && reg.estado === 'Invitado') {
-              await supabase.from('equipo').update({ estado: 'Activo' }).eq('id', reg.id);
+              supabase.from('equipo').update({ estado: 'Activo' }).eq('id', reg.id).then(() => {});
             }
             iniciarSesionEnApp({
               id: reg.id,
@@ -147,25 +164,13 @@ export default function AuthGate({ children }: { children: React.ReactNode }) {
               tipo_acceso: reg.tipo_acceso || 'Invitado',
               foto_url: reg.foto_url || googleAvatar,
             });
-            setVerificando(false);
-            return;
           } else {
             await supabase.auth.signOut();
+            localStorage.removeItem('mb_sesion_usuario');
+            setUsuario(null);
             setErrorMsg(check.motivo || 'Cuenta de Google no autorizada.');
-            setVerificando(false);
-            return;
           }
         }
-
-        // 2. Revisar sesión local guardada (correo y contraseña)
-        const saved = localStorage.getItem('mb_sesion_usuario');
-        if (saved && activo) {
-          setUsuario(JSON.parse(saved));
-        }
-
-        const params = new URLSearchParams(window.location.search);
-        const inv = params.get('invitado');
-        if (inv && activo) setEmail(inv);
       } catch {
         // Silencioso
       } finally {
@@ -267,7 +272,6 @@ export default function AuthGate({ children }: { children: React.ReactNode }) {
     });
   };
 
-  // Abre el selector oficial de cuentas de Google ("Elige una cuenta")
   const manejarContinuarGoogle = async () => {
     setErrorMsg(null);
     setOkMsg(null);
@@ -313,6 +317,7 @@ export default function AuthGate({ children }: { children: React.ReactNode }) {
       </AuthContext.Provider>
     );
   }
+
   return (
     <div className="min-h-screen bg-[#0D0D0D] text-white flex flex-col items-center justify-center p-4 relative overflow-hidden font-sans">
       <div
@@ -323,7 +328,6 @@ export default function AuthGate({ children }: { children: React.ReactNode }) {
         }}
       />
 
-      {/* Selector de idioma ES / EN / PT */}
       <div className="fixed top-5 right-6 z-20 bg-[#18181B] border border-white/10 rounded-full p-1 flex items-center gap-1 shadow-xl">
         {(['ES', 'EN', 'PT'] as Idioma[]).map((lang) => (
           <button
@@ -339,7 +343,6 @@ export default function AuthGate({ children }: { children: React.ReactNode }) {
         ))}
       </div>
 
-      {/* CABECERA */}
       <div className="relative z-10 flex flex-col items-center text-center mb-6">
         <div className="w-12 h-12 rounded-2xl bg-[#EAB308] text-black flex items-center justify-center shadow-[0_0_30px_rgba(234,179,8,0.35)] mb-4">
           <Compass className="w-6 h-6 stroke-[2.2]" />
@@ -352,7 +355,6 @@ export default function AuthGate({ children }: { children: React.ReactNode }) {
         </p>
       </div>
 
-      {/* TARJETA CENTRAL */}
       <div className="relative z-10 w-full max-w-md bg-[#141416]/95 border border-white/10 rounded-3xl p-7 shadow-2xl space-y-5">
         <div>
           <h2 className="text-lg font-extrabold text-white">
@@ -365,7 +367,6 @@ export default function AuthGate({ children }: { children: React.ReactNode }) {
           </p>
         </div>
 
-        {/* BOTÓN CONTINUAR CON GOOGLE -> ABRE SELECTOR DE CUENTAS DE GOOGLE */}
         <button
           type="button"
           disabled={cargando}
@@ -413,7 +414,6 @@ export default function AuthGate({ children }: { children: React.ReactNode }) {
           </div>
         )}
 
-        {/* FORMULARIO DE CORREO */}
         <form onSubmit={manejarLogin} className="space-y-4">
           <div>
             <label className="block text-xs font-bold text-gray-200 mb-1.5">
@@ -483,7 +483,6 @@ export default function AuthGate({ children }: { children: React.ReactNode }) {
           </button>
         </form>
 
-        {/* BOTONES INFERIORES */}
         <div className="space-y-2.5 pt-1">
           {modo === 'login' ? (
             <div className="w-full bg-[#1A1B20] border border-white/10 rounded-xl py-2.5 px-4 text-center text-xs text-gray-300">

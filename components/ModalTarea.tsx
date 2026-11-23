@@ -3,7 +3,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { supabase } from '@/lib/supabase';
 import { X, Trash2, ChevronDown, User } from 'lucide-react';
-
+import { moverAPapelera } from '@/lib/papelera';
 export const RUBROS_TAREAS = [
   'Proyecto y Diseño',
   'Documentación / Planos',
@@ -143,18 +143,26 @@ export default function ModalTarea({
   };
 
   const eliminarTarea = async () => {
-    if (!tareaEditando) return;
-    setCargando(true);
-    const { error } = await supabase.from('tareas').delete().eq('id', tareaEditando.id);
+  if (!tareaEditando) return;
+  setCargando(true);
+  try {
+    await moverAPapelera({
+      tabla: 'tareas',
+      modulo: 'Tareas',
+      titulo: tareaEditando.titulo || 'Tarea sin título',
+      subtitulo: tareaEditando.proyecto_codigo
+        ? `${tareaEditando.proyecto_codigo} · ${tareaEditando.proyecto_nombre || ''}`
+        : tareaEditando.rubro || '',
+      registro: tareaEditando,
+    });
+    onClose();
+    onGuardado('Tarea movida a la papelera');
+  } catch (error: any) {
+    alert('Error al mover la tarea a la papelera: ' + error.message);
+  } finally {
     setCargando(false);
-
-    if (!error) {
-      onClose();
-      onGuardado('Tarea eliminada');
-    } else {
-      alert('Error al eliminar tarea: ' + error.message);
-    }
-  };
+  }
+};
 
   return (
     <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4 backdrop-blur-sm">

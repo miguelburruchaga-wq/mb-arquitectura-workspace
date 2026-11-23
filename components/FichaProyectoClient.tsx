@@ -1,13 +1,16 @@
 "use client";
 
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { supabase } from '@/lib/supabase';
+import { moverAPapelera } from '@/lib/papelera';
 import ModalMovimientoFinanciero from '@/components/ModalMovimientoFinanciero';
 import ModalCompraPedido from '@/components/ModalCompraPedido';
 import ModalTarea from '@/components/ModalTarea';
 import ModalDocumento from '@/components/ModalDocumento';
+import ModalVisita from '@/components/ModalVisita';
 import {
   ArrowLeft,
   User,
@@ -62,14 +65,20 @@ export default function FichaProyectoClient({
   documentos?: any[];
 }) {
   const router = useRouter();
+  const [montado, setMontado] = useState(false);
+
   const [pestanaActiva, setPestanaActiva] = useState<
-    'resumen' | 'tareas' | 'visitas' | 'documentos' | 'compras' | 'finanzas'
+    'resumen' | 'tareas' | 'visitas' | 'documentos' | 'compras' | 'finanzas' | 'comentarios'
   >('resumen');
   const [estadoProyecto, setEstadoProyecto] = useState(proyecto.estado || 'En Diseño');
   const [etapaActual, setEtapaActual] = useState(
     proyecto.etapa_actual || 'Relevamiento y Concepto'
   );
   const [toast, setToast] = useState<string | null>(null);
+
+  // Confirmación Papelera del Proyecto
+  const [confirmarPapelera, setConfirmarPapelera] = useState(false);
+  const [enviandoPapelera, setEnviandoPapelera] = useState(false);
 
   const [equipoAsignado, setEquipoAsignado] = useState<string[]>(() => {
     const base = Array.isArray(proyecto.equipo_asignado) ? [...proyecto.equipo_asignado] : [];
@@ -98,6 +107,8 @@ export default function FichaProyectoClient({
   const [tareaEditando, setTareaEditando] = useState<any | null>(null);
   const [modalDocumento, setModalDocumento] = useState(false);
   const [docEditando, setDocEditando] = useState<any | null>(null);
+  const [modalVisita, setModalVisita] = useState(false);
+  const [visitaEditando, setVisitaEditando] = useState<any | null>(null);
 
   // Modal Editar Proyecto
   const [modalEditarProy, setModalEditarProy] = useState(false);
@@ -116,12 +127,15 @@ export default function FichaProyectoClient({
   const [editDescripcion, setEditDescripcion] = useState(proyecto.descripcion || '');
   const [guardandoEdicion, setGuardandoEdicion] = useState(false);
 
-  // Modal Agendar Visita rápida
-  const [modalNuevaVisita, setModalNuevaVisita] = useState(false);
-  const [visitaTitulo, setVisitaTitulo] = useState('Visita');
-  const [visitaFecha, setVisitaFecha] = useState(() => new Date().toISOString().split('T')[0]);
-  const [visitaHora, setVisitaHora] = useState('10:00');
-  const [guardandoVisita, setGuardandoVisita] = useState(false);
+  useEffect(() => {
+    setMontado(true);
+  }, []);
+
+  useEffect(() => {
+    if (Array.isArray(proyecto.comentarios)) {
+      setComentarios(proyecto.comentarios);
+    }
+  }, [proyecto.comentarios]);
 
   const mostrarToast = (msg: string) => {
     setToast(msg);
@@ -153,6 +167,31 @@ export default function FichaProyectoClient({
     }
   };
 
+  const enviarProyectoAPapelera = async () => {
+    setEnviandoPapelera(true);
+    try {
+      await moverAPapelera({
+        tabla: 'proyectos',
+        modulo: 'Proyectos',
+        titulo: proyecto.nombre || 'Proyecto sin nombre',
+        subtitulo: `${proyecto.codigo || ''} ${
+          clienteAsociado?.nombre
+            ? `· ${clienteAsociado.nombre}`
+            : proyecto.cliente_nombre
+            ? `· ${proyecto.cliente_nombre}`
+            : ''
+        }`.trim(),
+        registro: proyecto,
+      });
+      setConfirmarPapelera(false);
+      router.push('/proyectos');
+      router.refresh();
+    } catch (error: any) {
+      alert('Error al enviar el proyecto a papelera: ' + error.message);
+      setEnviandoPapelera(false);
+    }
+  };
+
   const seleccionarEtapa = async (nuevaEtapa: string) => {
     setEtapaActual(nuevaEtapa);
     await supabase.from('proyectos').update({ etapa_actual: nuevaEtapa }).eq('id', proyecto.id);
@@ -179,6 +218,7 @@ export default function FichaProyectoClient({
     };
     reader.readAsDataURL(file);
   };
+
   const toggleIntegranteEquipo = async (nombreIntegrante: string) => {
     const yaEsta = equipoAsignado.includes(nombreIntegrante);
     const actualizado = yaEsta
@@ -203,9 +243,20 @@ export default function FichaProyectoClient({
     if (!nuevoComentario.trim()) return;
     setEnviandoComentario(true);
 
+    let autorNombre = 'Alejandro Fego';
+    try {
+      const saved = localStorage.getItem('mb_sesion_usuario');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (parsed?.nombre) autorNombre = parsed.nombre;
+      }
+    } catch {
+      // Silencioso
+    }
+
     const item = {
       id: Date.now(),
-      autor: 'Alejandro Fego',
+      autor: autorNombre,
       texto: nuevoComentario.trim(),
       fecha: new Date().toLocaleString('es-AR', {
         day: '2-digit',
@@ -217,17 +268,38 @@ export default function FichaProyectoClient({
     };
 
     const listaActualizada = [item, ...comentarios];
-    setComentarios(listaActualizada);
-    setNuevoComentario('');
 
-    await supabase
+    const { error } = await supabase
       .from('proyectos')
       .update({ comentarios: listaActualizada })
       .eq('id', proyecto.id);
 
     setEnviandoComentario(false);
-    mostrarToast('Comentario publicado');
-    router.refresh();
+
+    if (!error) {
+      setComentarios(listaActualizada);
+      setNuevoComentario('');
+      mostrarToast('Comentario guardado en el proyecto');
+      router.refresh();
+    } else {
+      alert('Error al guardar comentario: ' + error.message);
+    }
+  };
+
+  const eliminarComentario = async (comentarioId: number) => {
+    const listaActualizada = comentarios.filter((c) => c.id !== comentarioId);
+    const { error } = await supabase
+      .from('proyectos')
+      .update({ comentarios: listaActualizada })
+      .eq('id', proyecto.id);
+
+    if (!error) {
+      setComentarios(listaActualizada);
+      mostrarToast('Comentario eliminado');
+      router.refresh();
+    } else {
+      alert('Error al eliminar comentario: ' + error.message);
+    }
   };
 
   const guardarEdicionProyecto = async (e: React.FormEvent) => {
@@ -268,29 +340,6 @@ export default function FichaProyectoClient({
     await supabase.from('tareas').update({ estado: nuevoEstado }).eq('id', tarea.id);
     mostrarToast(`Tarea marcada como ${nuevoEstado}`);
     router.refresh();
-  };
-
-  const guardarNuevaVisita = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setGuardandoVisita(true);
-    const { error } = await supabase.from('visitas').insert([
-      {
-        titulo: visitaTitulo.trim() || 'Visita',
-        proyecto_codigo: proyecto.codigo,
-        proyecto_nombre: proyecto.nombre,
-        fecha: visitaFecha,
-        hora: visitaHora,
-        estado: 'Programada',
-      },
-    ]);
-    setGuardandoVisita(false);
-    if (!error) {
-      setModalNuevaVisita(false);
-      mostrarToast('Visita agendada');
-      router.refresh();
-    } else {
-      alert('Error al agendar visita: ' + error.message);
-    }
   };
 
   const cambiarEstadoMovimientoRapido = async (movId: number, nuevoEstado: string) => {
@@ -388,23 +437,107 @@ export default function FichaProyectoClient({
   }, [documentos]);
 
   const docsEnDesarrollo = Math.max(0, documentos.length - docsListos);
+
+  // Bloque reutilizable de Comentarios y Menciones (usado en Resumen General y en la pestaña Comentarios)
+  const renderTarjetaComentarios = (alturaMaximaLista = 'max-h-60') => (
+    <div className="bg-[#242424] border border-white/10 rounded-2xl p-6 shadow-xl flex flex-col">
+      <div className="mb-4">
+        <h2 className="text-sm font-bold text-white flex items-center gap-2">
+          <MessageSquare className="w-4 h-4 text-[#EAB308]" />
+          Comentarios del Proyecto y Menciones (@Nombre) ({comentarios.length})
+        </h2>
+        <p className="text-xs text-gray-400 mt-0.5">
+          Dejá notas sobre el proyecto o tocá el nombre de un integrante para etiquetarlo
+        </p>
+      </div>
+
+      <div className="flex flex-wrap items-center gap-1.5 mb-3">
+        <span className="text-xs text-gray-400 mr-1">Mencionar a:</span>
+        {equipo.map((miembro) => (
+          <button
+            key={miembro.id}
+            type="button"
+            onClick={() =>
+              setNuevoComentario((prev) =>
+                `${prev}${prev && !prev.endsWith(' ') ? ' ' : ''}@${miembro.nombre} `
+              )
+            }
+            className="bg-blue-950/70 hover:bg-blue-900/70 border border-blue-800/60 text-blue-300 px-2.5 py-1 rounded-full text-[11px] font-semibold cursor-pointer transition-colors"
+          >
+            @{miembro.nombre}
+          </button>
+        ))}
+      </div>
+
+      <form onSubmit={publicarComentario} className="flex gap-2 mb-4">
+        <input
+          type="text"
+          value={nuevoComentario}
+          onChange={(e) => setNuevoComentario(e.target.value)}
+          placeholder="Escribí un comentario o actualización sobre el proyecto..."
+          className="flex-1 bg-[#181818] border border-white/10 rounded-xl px-3.5 py-2.5 text-xs text-white placeholder-gray-400 focus:outline-none focus:border-[#EAB308]/60"
+        />
+        <button
+          type="submit"
+          disabled={enviandoComentario || !nuevoComentario.trim()}
+          className="bg-[#EAB308] hover:bg-[#CA9A04] disabled:opacity-50 text-black px-4 py-2.5 rounded-xl font-bold text-xs cursor-pointer flex-shrink-0"
+        >
+          {enviandoComentario ? 'Guardando...' : 'Publicar'}
+        </button>
+      </form>
+
+      <div className={`space-y-2.5 flex-1 overflow-y-auto ${alturaMaximaLista}`}>
+        {comentarios.length === 0 ? (
+          <p className="text-xs text-gray-400">
+            Aún no hay comentarios cargados en este proyecto.
+          </p>
+        ) : (
+          comentarios.map((c) => (
+            <div
+              key={c.id}
+              className="bg-[#181818] border border-white/10 rounded-xl p-3.5 text-xs flex justify-between items-start gap-3"
+            >
+              <div className="space-y-1 flex-1 min-w-0">
+                <div className="flex items-center gap-2">
+                  <span className="font-bold text-[#EAB308]">{c.autor}</span>
+                  <span className="text-[10px] text-gray-500">· {c.fecha}</span>
+                </div>
+                <p className="text-gray-200 leading-relaxed whitespace-pre-wrap break-words">
+                  {c.texto}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => eliminarComentario(c.id)}
+                title="Eliminar comentario"
+                className="text-gray-500 hover:text-rose-400 p-1 rounded-lg hover:bg-rose-950/50 transition-colors cursor-pointer flex-shrink-0"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+              </button>
+            </div>
+          ))
+        )}
+      </div>
+    </div>
+  );
+
   return (
-    <div className="min-h-screen bg-[#121212] text-white p-8 font-sans">
+    <div className="min-h-screen text-white p-8 font-sans">
       {/* BARRA SUPERIOR */}
       <div className="flex flex-wrap justify-between items-center gap-4 mb-6">
         <Link
           href="/proyectos"
-          className="bg-[#1A1A1A] hover:bg-gray-800 border border-gray-800 text-gray-200 px-4 py-2 rounded-xl text-xs font-semibold inline-flex items-center gap-2 transition-colors"
+          className="bg-[#242424] hover:bg-white/10 border border-white/10 text-gray-200 px-4 py-2 rounded-xl text-xs font-semibold inline-flex items-center gap-2 transition-colors"
         >
           <ArrowLeft className="w-3.5 h-3.5" /> Volver a Proyectos
         </Link>
 
         <div className="flex flex-wrap items-center gap-2.5">
-          <span className="text-xs text-gray-400">Estado:</span>
+          <span className="text-xs text-gray-300">Estado:</span>
           <select
             value={estadoProyecto}
             onChange={(e) => cambiarEstadoProyecto(e.target.value)}
-            className="bg-[#1A1A1A] border border-gray-800 rounded-xl px-3 py-2 text-xs font-semibold text-white"
+            className="bg-[#242424] border border-white/10 rounded-xl px-3 py-2 text-xs font-semibold text-white cursor-pointer"
           >
             <option value="En Diseño">En Diseño</option>
             <option value="En Obra">En Obra</option>
@@ -420,7 +553,7 @@ export default function FichaProyectoClient({
             <FileText className="w-3.5 h-3.5" /> Reporte para el cliente
           </button>
 
-          <label className="bg-[#1A1A1A] hover:bg-gray-800 border border-gray-800 text-gray-200 px-3.5 py-2 rounded-xl text-xs font-semibold inline-flex items-center gap-1.5 cursor-pointer">
+          <label className="bg-[#242424] hover:bg-white/10 border border-white/10 text-gray-200 px-3.5 py-2 rounded-xl text-xs font-semibold inline-flex items-center gap-1.5 cursor-pointer">
             <ImageIcon className="w-3.5 h-3.5 text-[#EAB308]" /> Portada
             <input type="file" accept="image/*" onChange={manejarCambioPortada} className="hidden" />
           </label>
@@ -428,14 +561,15 @@ export default function FichaProyectoClient({
           <button
             type="button"
             onClick={() => setModalEditarProy(true)}
-            className="bg-[#1A1A1A] hover:bg-gray-800 border border-gray-800 text-gray-200 px-3.5 py-2 rounded-xl text-xs font-semibold inline-flex items-center gap-1.5 cursor-pointer"
+            className="bg-[#242424] hover:bg-white/10 border border-white/10 text-gray-200 px-3.5 py-2 rounded-xl text-xs font-semibold inline-flex items-center gap-1.5 cursor-pointer"
           >
             <Edit3 className="w-3.5 h-3.5 text-[#EAB308]" /> Editar proyecto
           </button>
 
           <button
             type="button"
-            className="bg-rose-950/60 hover:bg-rose-900/60 border border-rose-800/60 text-rose-400 px-3.5 py-2 rounded-xl text-xs font-semibold inline-flex items-center gap-1.5 cursor-pointer"
+            onClick={() => setConfirmarPapelera(true)}
+            className="bg-rose-950/75 hover:bg-rose-900/80 border border-rose-800/60 text-rose-400 px-3.5 py-2 rounded-xl text-xs font-semibold inline-flex items-center gap-1.5 cursor-pointer transition-colors"
           >
             <Trash2 className="w-3.5 h-3.5" /> Papelera
           </button>
@@ -443,7 +577,7 @@ export default function FichaProyectoClient({
       </div>
 
       {/* BANNER PRINCIPAL */}
-      <div className="bg-[#1A1A1A] border border-gray-800 rounded-2xl overflow-hidden shadow-xl mb-6">
+      <div className="bg-[#242424] border border-white/10 rounded-2xl overflow-hidden shadow-2xl mb-6">
         <div
           className="h-44 bg-cover bg-center relative"
           style={{
@@ -452,7 +586,7 @@ export default function FichaProyectoClient({
               : 'linear-gradient(135deg, #27272a 0%, #18181b 100%)',
           }}
         >
-          <div className="absolute inset-0 bg-gradient-to-t from-[#1A1A1A] via-[#1A1A1A]/40 to-transparent" />
+          <div className="absolute inset-0 bg-gradient-to-t from-[#1E1E1E] via-[#1E1E1E]/40 to-transparent" />
           <label className="absolute top-3 right-3 bg-black/75 hover:bg-black border border-gray-700 text-white px-3 py-1.5 rounded-lg text-xs font-semibold inline-flex items-center gap-1.5 cursor-pointer">
             <ImageIcon className="w-3.5 h-3.5 text-[#EAB308]" /> Cambiar portada
             <input type="file" accept="image/*" onChange={manejarCambioPortada} className="hidden" />
@@ -470,7 +604,7 @@ export default function FichaProyectoClient({
                   <span className="text-xs font-semibold text-gray-300">{proyecto.tipologia}</span>
                 )}
                 {proyecto.responsable && (
-                  <span className="bg-[#121212] border border-gray-800 text-gray-300 px-2.5 py-0.5 rounded-md text-xs">
+                  <span className="bg-[#181818] border border-white/10 text-gray-300 px-2.5 py-0.5 rounded-md text-xs">
                     Responsable: <strong>{proyecto.responsable}</strong>
                   </span>
                 )}
@@ -481,7 +615,7 @@ export default function FichaProyectoClient({
 
               <h1 className="text-3xl font-extrabold text-white tracking-tight">{proyecto.nombre}</h1>
 
-              <div className="flex flex-wrap items-center gap-4 text-xs text-gray-400 mt-2">
+              <div className="flex flex-wrap items-center gap-4 text-xs text-gray-300 mt-2">
                 <span className="inline-flex items-center gap-1.5">
                   <User className="w-3.5 h-3.5 text-[#EAB308]" />
                   Cliente:{' '}
@@ -519,7 +653,7 @@ export default function FichaProyectoClient({
             )}
           </div>
 
-          <div className="flex flex-wrap items-center gap-2 mt-6 pt-4 border-t border-gray-800/80">
+          <div className="flex flex-wrap items-center gap-2 mt-6 pt-4 border-t border-white/10">
             {[
               { id: 'resumen', label: 'Resumen General' },
               { id: 'tareas', label: `Tareas (${tareas.length})` },
@@ -527,6 +661,7 @@ export default function FichaProyectoClient({
               { id: 'documentos', label: `Documentos (${documentos.length})` },
               { id: 'compras', label: `Compras (${compras.length})` },
               { id: 'finanzas', label: `Finanzas (${movimientos.length})` },
+              { id: 'comentarios', label: `Comentarios (${comentarios.length})` },
             ].map((tab) => (
               <button
                 key={tab.id}
@@ -534,7 +669,7 @@ export default function FichaProyectoClient({
                 className={`px-4 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer ${
                   pestanaActiva === tab.id
                     ? 'bg-[#EAB308] text-black shadow-[0_0_15px_rgba(234,179,8,0.25)]'
-                    : 'bg-[#121212] text-gray-300 hover:text-white border border-gray-800'
+                    : 'bg-[#181818] text-gray-300 hover:text-white border border-white/10'
                 }`}
               >
                 {tab.label}
@@ -548,7 +683,7 @@ export default function FichaProyectoClient({
       {pestanaActiva === 'resumen' && (
         <div className="space-y-6">
           {/* 1. ETAPA Y AVANCE */}
-          <div className="bg-[#1A1A1A] border border-gray-800 rounded-2xl p-6 shadow-xl">
+          <div className="bg-[#242424] border border-white/10 rounded-2xl p-6 shadow-xl">
             <div className="flex flex-wrap justify-between items-start gap-4 mb-5">
               <div>
                 <h2 className="text-xs font-extrabold uppercase tracking-wider text-gray-300">
@@ -574,7 +709,7 @@ export default function FichaProyectoClient({
                     className={`text-left p-4 rounded-xl border transition-all cursor-pointer flex flex-col justify-between min-h-[96px] ${
                       esActual
                         ? 'bg-[#EAB308]/10 border-[#EAB308] shadow-[0_0_18px_rgba(234,179,8,0.18)]'
-                        : 'bg-[#121212] border-gray-800 hover:border-gray-700'
+                        : 'bg-[#181818] border-white/10 hover:border-white/25'
                     }`}
                   >
                     <div className="flex items-center justify-between w-full mb-3">
@@ -606,7 +741,7 @@ export default function FichaProyectoClient({
 
           {/* 2. DATOS PRINCIPALES + ESTADO ECONÓMICO Y VISITAS */}
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-            <div className="lg:col-span-7 bg-[#1A1A1A] border border-gray-800 rounded-2xl p-6 shadow-xl flex flex-col justify-between">
+            <div className="lg:col-span-7 bg-[#242424] border border-white/10 rounded-2xl p-6 shadow-xl flex flex-col justify-between">
               <div>
                 <div className="flex justify-between items-center mb-4">
                   <h2 className="text-xs font-extrabold uppercase tracking-wider text-gray-300">
@@ -622,38 +757,38 @@ export default function FichaProyectoClient({
                 </div>
 
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-3">
-                  <div className="bg-[#121212] border border-gray-800 rounded-xl p-3.5">
+                  <div className="bg-[#181818] border border-white/10 rounded-xl p-3.5">
                     <div className="text-[11px] text-gray-400">Cliente</div>
                     <div className="text-xs font-bold text-white mt-1">
                       {clienteAsociado?.nombre || 'Sin cliente'}
                     </div>
                   </div>
-                  <div className="bg-[#121212] border border-gray-800 rounded-xl p-3.5">
+                  <div className="bg-[#181818] border border-white/10 rounded-xl p-3.5">
                     <div className="text-[11px] text-gray-400">Tipología</div>
                     <div className="text-xs font-bold text-white mt-1">
                       {proyecto.tipologia || '—'}
                     </div>
                   </div>
-                  <div className="bg-[#121212] border border-gray-800 rounded-xl p-3.5">
+                  <div className="bg-[#181818] border border-white/10 rounded-xl p-3.5">
                     <div className="text-[11px] text-gray-400">Responsable</div>
                     <div className="text-xs font-bold text-white mt-1">
                       {proyecto.responsable || 'Sin asignar'}
                     </div>
                   </div>
-                  <div className="bg-[#121212] border border-gray-800 rounded-xl p-3.5">
+                  <div className="bg-[#181818] border border-white/10 rounded-xl p-3.5">
                     <div className="text-[11px] text-gray-400">Superficie</div>
                     <div className="text-xs font-bold text-white mt-1">
                       {proyecto.superficie || '—'}
                     </div>
                   </div>
-                  <div className="bg-[#121212] border border-gray-800 rounded-xl p-3.5">
+                  <div className="bg-[#181818] border border-white/10 rounded-xl p-3.5">
                     <div className="text-[11px] text-gray-400">Inicio / Entrega</div>
                     <div className="text-xs font-bold text-white mt-1">
                       {formatearFechaCorta(proyecto.fecha_inicio)} →{' '}
                       {formatearFechaCorta(proyecto.fecha_entrega)}
                     </div>
                   </div>
-                  <div className="bg-[#121212] border border-gray-800 rounded-xl p-3.5">
+                  <div className="bg-[#181818] border border-white/10 rounded-xl p-3.5">
                     <div className="text-[11px] text-gray-400">Próxima Visita</div>
                     <div className="text-xs font-bold text-[#EAB308] mt-1">
                       {proximaVisita ? formatearFechaCorta(proximaVisita.fecha) : 'Sin agendar'}
@@ -662,7 +797,7 @@ export default function FichaProyectoClient({
                 </div>
               </div>
 
-              <div className="bg-[#121212] border border-gray-800 rounded-xl p-4">
+              <div className="bg-[#181818] border border-white/10 rounded-xl p-4">
                 <div className="text-[11px] text-gray-400 mb-1">
                   Descripción y Notas del Proyecto:
                 </div>
@@ -672,7 +807,7 @@ export default function FichaProyectoClient({
               </div>
             </div>
 
-            <div className="lg:col-span-5 bg-[#1A1A1A] border border-gray-800 rounded-2xl p-6 shadow-xl space-y-5">
+            <div className="lg:col-span-5 bg-[#242424] border border-white/10 rounded-2xl p-6 shadow-xl space-y-5">
               <div>
                 <div className="flex justify-between items-center mb-4">
                   <h2 className="text-xs font-extrabold uppercase tracking-wider text-gray-300">
@@ -688,7 +823,7 @@ export default function FichaProyectoClient({
                 </div>
 
                 <div className="grid grid-cols-2 gap-3">
-                  <div className="bg-[#121212] border border-gray-800 rounded-xl p-3.5">
+                  <div className="bg-[#181818] border border-white/10 rounded-xl p-3.5">
                     <div className="text-[11px] text-gray-400">Presupuesto / Honorarios</div>
                     <div className="text-base font-extrabold text-white mt-1">
                       USD $
@@ -698,7 +833,7 @@ export default function FichaProyectoClient({
                       })}
                     </div>
                   </div>
-                  <div className="bg-[#121212] border border-gray-800 rounded-xl p-3.5">
+                  <div className="bg-[#181818] border border-white/10 rounded-xl p-3.5">
                     <div className="text-[11px] text-gray-400">Cobrado</div>
                     <div className="text-base font-extrabold text-emerald-400 mt-1">
                       USD $
@@ -708,7 +843,7 @@ export default function FichaProyectoClient({
                       })}
                     </div>
                   </div>
-                  <div className="bg-[#121212] border border-gray-800 rounded-xl p-3.5">
+                  <div className="bg-[#181818] border border-white/10 rounded-xl p-3.5">
                     <div className="text-[11px] text-gray-400">Saldo por cobrar</div>
                     <div className="text-base font-extrabold text-[#EAB308] mt-1">
                       USD $
@@ -718,7 +853,7 @@ export default function FichaProyectoClient({
                       })}
                     </div>
                   </div>
-                  <div className="bg-[#121212] border border-gray-800 rounded-xl p-3.5">
+                  <div className="bg-[#181818] border border-white/10 rounded-xl p-3.5">
                     <div className="text-[11px] text-gray-400">Gastos / Compras</div>
                     <div className="text-base font-extrabold text-rose-500 mt-1">
                       USD $
@@ -731,7 +866,7 @@ export default function FichaProyectoClient({
                 </div>
               </div>
 
-              <div className="pt-4 border-t border-gray-800/80">
+              <div className="pt-4 border-t border-white/10">
                 <div className="flex justify-between items-center mb-3">
                   <h3 className="text-xs font-bold text-white flex items-center gap-1.5">
                     <Calendar className="w-3.5 h-3.5 text-[#EAB308]" />
@@ -739,7 +874,10 @@ export default function FichaProyectoClient({
                   </h3>
                   <button
                     type="button"
-                    onClick={() => setModalNuevaVisita(true)}
+                    onClick={() => {
+                      setVisitaEditando(null);
+                      setModalVisita(true);
+                    }}
                     className="text-xs font-bold text-[#EAB308] hover:underline cursor-pointer"
                   >
                     + Agendar visita
@@ -753,14 +891,19 @@ export default function FichaProyectoClient({
                     {visitas.slice(0, 3).map((v) => (
                       <div
                         key={v.id}
-                        className="bg-[#121212] border border-gray-800 rounded-xl px-4 py-3 flex justify-between items-center"
+                        onClick={() => {
+                          setVisitaEditando(v);
+                          setModalVisita(true);
+                        }}
+                        className="bg-[#181818] border border-white/10 hover:border-white/25 rounded-xl px-4 py-3 flex justify-between items-center cursor-pointer transition-colors"
                       >
                         <div>
                           <div className="text-xs font-bold text-white">
                             {v.titulo || v.motivo || 'Visita'}
                           </div>
                           <div className="text-[11px] text-gray-400 mt-0.5">
-                            {formatearFechaCorta(v.fecha)} {v.hora ? `· ${v.hora} hs` : ''}
+                            {formatearFechaCorta(v.fecha)}{' '}
+                            {v.horario || v.hora ? `· ${v.horario || v.hora} hs` : ''}
                           </div>
                         </div>
                         <span className="px-2.5 py-1 rounded-full bg-emerald-950/70 border border-emerald-700/50 text-emerald-400 text-[11px] font-semibold">
@@ -776,7 +919,7 @@ export default function FichaProyectoClient({
 
           {/* 3. TAREAS + DOCUMENTACIÓN Y ENTREGAS */}
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-            <div className="lg:col-span-7 bg-[#1A1A1A] border border-gray-800 rounded-2xl p-6 shadow-xl">
+            <div className="lg:col-span-7 bg-[#242424] border border-white/10 rounded-2xl p-6 shadow-xl">
               <div className="mb-4">
                 <h2 className="text-sm font-bold text-white flex items-center gap-2">
                   <CheckSquare className="w-4 h-4 text-[#EAB308]" />
@@ -815,8 +958,8 @@ export default function FichaProyectoClient({
                       filtroTareaResumen === 'atrasadas' ? 'todas' : 'atrasadas'
                     )
                   }
-                  className={`bg-[#121212] border rounded-xl px-3.5 py-2.5 flex justify-between items-center text-xs font-bold cursor-pointer ${
-                    filtroTareaResumen === 'atrasadas' ? 'border-rose-500' : 'border-gray-800'
+                  className={`bg-[#181818] border rounded-xl px-3.5 py-2.5 flex justify-between items-center text-xs font-bold cursor-pointer ${
+                    filtroTareaResumen === 'atrasadas' ? 'border-rose-500' : 'border-white/10'
                   }`}
                 >
                   <span className="text-rose-400">Atrasadas</span>
@@ -829,8 +972,8 @@ export default function FichaProyectoClient({
                       filtroTareaResumen === 'por_realizar' ? 'todas' : 'por_realizar'
                     )
                   }
-                  className={`bg-[#121212] border rounded-xl px-3.5 py-2.5 flex justify-between items-center text-xs font-bold cursor-pointer ${
-                    filtroTareaResumen === 'por_realizar' ? 'border-[#EAB308]' : 'border-gray-800'
+                  className={`bg-[#181818] border rounded-xl px-3.5 py-2.5 flex justify-between items-center text-xs font-bold cursor-pointer ${
+                    filtroTareaResumen === 'por_realizar' ? 'border-[#EAB308]' : 'border-white/10'
                   }`}
                 >
                   <span className="text-[#EAB308]">Por realizar</span>
@@ -843,8 +986,8 @@ export default function FichaProyectoClient({
                       filtroTareaResumen === 'en_curso' ? 'todas' : 'en_curso'
                     )
                   }
-                  className={`bg-[#121212] border rounded-xl px-3.5 py-2.5 flex justify-between items-center text-xs font-bold cursor-pointer ${
-                    filtroTareaResumen === 'en_curso' ? 'border-cyan-400' : 'border-gray-800'
+                  className={`bg-[#181818] border rounded-xl px-3.5 py-2.5 flex justify-between items-center text-xs font-bold cursor-pointer ${
+                    filtroTareaResumen === 'en_curso' ? 'border-cyan-400' : 'border-white/10'
                   }`}
                 >
                   <span className="text-cyan-400">En curso</span>
@@ -857,8 +1000,8 @@ export default function FichaProyectoClient({
                       filtroTareaResumen === 'completadas' ? 'todas' : 'completadas'
                     )
                   }
-                  className={`bg-[#121212] border rounded-xl px-3.5 py-2.5 flex justify-between items-center text-xs font-bold cursor-pointer ${
-                    filtroTareaResumen === 'completadas' ? 'border-emerald-400' : 'border-gray-800'
+                  className={`bg-[#181818] border rounded-xl px-3.5 py-2.5 flex justify-between items-center text-xs font-bold cursor-pointer ${
+                    filtroTareaResumen === 'completadas' ? 'border-emerald-400' : 'border-white/10'
                   }`}
                 >
                   <span className="text-emerald-400">Completadas</span>
@@ -886,7 +1029,7 @@ export default function FichaProyectoClient({
                           setTareaEditando(t);
                           setModalTarea(true);
                         }}
-                        className="bg-[#121212] border border-gray-800 hover:border-gray-700 rounded-xl p-3.5 flex flex-wrap justify-between items-center gap-3 cursor-pointer transition-colors"
+                        className="bg-[#181818] border border-white/10 hover:border-white/25 rounded-xl p-3.5 flex flex-wrap justify-between items-center gap-3 cursor-pointer transition-colors"
                       >
                         <div className="flex items-start gap-3">
                           <button
@@ -967,7 +1110,7 @@ export default function FichaProyectoClient({
             </div>
 
             {/* DOCUMENTACIÓN Y ENTREGAS CONECTADA */}
-            <div className="lg:col-span-5 bg-[#1A1A1A] border border-gray-800 rounded-2xl p-6 shadow-xl flex flex-col justify-between">
+            <div className="lg:col-span-5 bg-[#242424] border border-white/10 rounded-2xl p-6 shadow-xl flex flex-col justify-between">
               <div>
                 <div className="flex justify-between items-start gap-3 mb-4">
                   <div>
@@ -993,12 +1136,12 @@ export default function FichaProyectoClient({
                 </div>
 
                 <div className="grid grid-cols-2 gap-3 mb-4">
-                  <div className="bg-[#121212] border border-gray-800 rounded-xl p-4">
+                  <div className="bg-[#181818] border border-white/10 rounded-xl p-4">
                     <div className="text-xs font-bold text-emerald-400">Listos / Aprobados</div>
                     <div className="text-2xl font-extrabold text-emerald-400 mt-1">{docsListos}</div>
                     <div className="text-[11px] text-gray-400 mt-1">Entregados o visados</div>
                   </div>
-                  <div className="bg-[#121212] border border-gray-800 rounded-xl p-4">
+                  <div className="bg-[#181818] border border-white/10 rounded-xl p-4">
                     <div className="text-xs font-bold text-[#EAB308]">En Desarrollo / Faltan</div>
                     <div className="text-2xl font-extrabold text-[#EAB308] mt-1">
                       {docsEnDesarrollo}
@@ -1008,7 +1151,7 @@ export default function FichaProyectoClient({
                 </div>
 
                 {documentos.length === 0 ? (
-                  <div className="bg-[#121212] border border-gray-800 rounded-xl p-6 text-center text-xs text-gray-400">
+                  <div className="bg-[#181818] border border-white/10 rounded-xl p-6 text-center text-xs text-gray-400">
                     Aún no hay planos, moodboards ni documentos cargados en este proyecto.
                   </div>
                 ) : (
@@ -1020,7 +1163,7 @@ export default function FichaProyectoClient({
                           setDocEditando(d);
                           setModalDocumento(true);
                         }}
-                        className="bg-[#121212] border border-gray-800 hover:border-gray-700 rounded-xl px-3.5 py-2.5 flex justify-between items-center gap-2 cursor-pointer"
+                        className="bg-[#181818] border border-white/10 hover:border-white/25 rounded-xl px-3.5 py-2.5 flex justify-between items-center gap-2 cursor-pointer"
                       >
                         <div className="truncate">
                           <div className="text-xs font-bold text-white truncate">
@@ -1038,7 +1181,7 @@ export default function FichaProyectoClient({
                 )}
               </div>
 
-              <div className="pt-4 mt-4 border-t border-gray-800/80">
+              <div className="pt-4 mt-4 border-t border-white/10">
                 <button
                   type="button"
                   onClick={() => setPestanaActiva('documentos')}
@@ -1050,9 +1193,9 @@ export default function FichaProyectoClient({
             </div>
           </div>
 
-          {/* 4. EQUIPO + COMENTARIOS */}
+          {/* 4. EQUIPO + COMENTARIOS (EN RESUMEN GENERAL) */}
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-            <div className="lg:col-span-6 bg-[#1A1A1A] border border-gray-800 rounded-2xl p-6 shadow-xl">
+            <div className="lg:col-span-6 bg-[#242424] border border-white/10 rounded-2xl p-6 shadow-xl">
               <div className="flex justify-between items-start gap-3 mb-4">
                 <div>
                   <h2 className="text-sm font-bold text-white flex items-center gap-2">
@@ -1090,7 +1233,7 @@ export default function FichaProyectoClient({
                       className={`rounded-xl p-3.5 border flex items-center justify-between gap-3 transition-colors ${
                         asignado
                           ? 'bg-[#EAB308]/5 border-[#EAB308]/50'
-                          : 'bg-[#121212] border-gray-800'
+                          : 'bg-[#181818] border-white/10'
                       }`}
                     >
                       <div className="flex items-center gap-3">
@@ -1116,7 +1259,7 @@ export default function FichaProyectoClient({
                         className={`px-3 py-1.5 rounded-lg text-xs font-bold border cursor-pointer transition-colors ${
                           asignado
                             ? 'bg-emerald-950/70 border-emerald-700/60 text-emerald-400'
-                            : 'bg-[#1A1A1A] border-gray-700 text-gray-200 hover:border-gray-500'
+                            : 'bg-[#242424] border-white/15 text-gray-200 hover:border-white/30'
                         }`}
                       >
                         {asignado ? '✓ Asignado' : '+ Asignar'}
@@ -1127,80 +1270,18 @@ export default function FichaProyectoClient({
               </div>
             </div>
 
-            <div className="lg:col-span-6 bg-[#1A1A1A] border border-gray-800 rounded-2xl p-6 shadow-xl flex flex-col">
-              <div className="mb-4">
-                <h2 className="text-sm font-bold text-white flex items-center gap-2">
-                  <MessageSquare className="w-4 h-4 text-[#EAB308]" />
-                  Comentarios del Proyecto y Menciones (@Nombre)
-                </h2>
-                <p className="text-xs text-gray-400 mt-0.5">
-                  Dejá notas sobre el proyecto o tocá el nombre de un integrante para etiquetarlo
-                </p>
-              </div>
-
-              <div className="flex flex-wrap items-center gap-1.5 mb-3">
-                <span className="text-xs text-gray-400 mr-1">Mencionar a:</span>
-                {equipo.map((miembro) => (
-                  <button
-                    key={miembro.id}
-                    type="button"
-                    onClick={() =>
-                      setNuevoComentario((prev) =>
-                        `${prev}${prev && !prev.endsWith(' ') ? ' ' : ''}@${miembro.nombre} `
-                      )
-                    }
-                    className="bg-blue-950/70 hover:bg-blue-900/70 border border-blue-800/60 text-blue-300 px-2.5 py-1 rounded-full text-[11px] font-semibold cursor-pointer transition-colors"
-                  >
-                    @{miembro.nombre}
-                  </button>
-                ))}
-              </div>
-
-              <form onSubmit={publicarComentario} className="flex gap-2 mb-4">
-                <input
-                  type="text"
-                  value={nuevoComentario}
-                  onChange={(e) => setNuevoComentario(e.target.value)}
-                  placeholder="Escribí un comentario o actualización sobre el proyecto..."
-                  className="flex-1 bg-[#121212] border border-gray-800 rounded-xl px-3.5 py-2.5 text-xs text-white placeholder-gray-500"
-                />
-                <button
-                  type="submit"
-                  disabled={enviandoComentario}
-                  className="bg-[#EAB308] hover:bg-[#CA9A04] text-black px-4 py-2.5 rounded-xl font-bold text-xs cursor-pointer flex-shrink-0"
-                >
-                  Publicar
-                </button>
-              </form>
-
-              <div className="space-y-2.5 flex-1 overflow-y-auto max-h-60">
-                {comentarios.length === 0 ? (
-                  <p className="text-xs text-gray-400">
-                    Aún no hay comentarios cargados en este proyecto.
-                  </p>
-                ) : (
-                  comentarios.map((c) => (
-                    <div
-                      key={c.id}
-                      className="bg-[#121212] border border-gray-800 rounded-xl p-3.5 text-xs"
-                    >
-                      <div className="flex justify-between items-center mb-1">
-                        <span className="font-bold text-[#EAB308]">{c.autor}</span>
-                        <span className="text-[10px] text-gray-500">{c.fecha}</span>
-                      </div>
-                      <p className="text-gray-200 leading-relaxed">{c.texto}</p>
-                    </div>
-                  ))
-                )}
-              </div>
-            </div>
+            <div className="lg:col-span-6">{renderTarjetaComentarios('max-h-60')}</div>
           </div>
         </div>
       )}
+
+      {/* PESTAÑA: COMENTARIOS Y MENCIONES (@NOMBRE) */}
+      {pestanaActiva === 'comentarios' && renderTarjetaComentarios('max-h-[520px]')}
+
       {/* PESTAÑA: FINANZAS */}
       {pestanaActiva === 'finanzas' && (
         <>
-          <div className="bg-[#1A1A1A] border border-gray-800 rounded-2xl p-6 shadow-xl mb-6">
+          <div className="bg-[#242424] border border-white/10 rounded-2xl p-6 shadow-xl mb-6">
             <div className="flex flex-wrap justify-between items-center gap-4 mb-6">
               <div>
                 <h2 className="text-base font-bold text-white flex items-center gap-2">
@@ -1226,13 +1307,13 @@ export default function FichaProyectoClient({
 
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
               <div className="grid grid-cols-2 gap-4">
-                <div className="bg-[#121212] border border-gray-800 rounded-xl p-4">
+                <div className="bg-[#181818] border border-white/10 rounded-xl p-4">
                   <div className="text-xs text-gray-400">Presupuesto / Honorarios</div>
                   <div className="text-2xl font-extrabold text-white mt-1">
                     USD ${presupuestoUsd.toLocaleString('es-AR')}
                   </div>
                 </div>
-                <div className="bg-[#121212] border border-gray-800 rounded-xl p-4">
+                <div className="bg-[#181818] border border-white/10 rounded-xl p-4">
                   <div className="text-xs text-gray-400">Ingresos Cobrados</div>
                   <div className="text-2xl font-extrabold text-emerald-400 mt-1">
                     USD $
@@ -1242,7 +1323,7 @@ export default function FichaProyectoClient({
                     })}
                   </div>
                 </div>
-                <div className="bg-[#121212] border border-gray-800 rounded-xl p-4">
+                <div className="bg-[#181818] border border-white/10 rounded-xl p-4">
                   <div className="text-xs text-gray-400">Pendiente de Cobro</div>
                   <div className="text-2xl font-extrabold text-[#EAB308] mt-1">
                     USD $
@@ -1252,7 +1333,7 @@ export default function FichaProyectoClient({
                     })}
                   </div>
                 </div>
-                <div className="bg-[#121212] border border-gray-800 rounded-xl p-4">
+                <div className="bg-[#181818] border border-white/10 rounded-xl p-4">
                   <div className="text-xs text-gray-400">Resultado Neto</div>
                   <div className="text-2xl font-extrabold text-emerald-400 mt-1">
                     USD $
@@ -1264,7 +1345,7 @@ export default function FichaProyectoClient({
                 </div>
               </div>
 
-              <div className="bg-[#121212] border border-gray-800 rounded-xl p-5 flex flex-col justify-center space-y-4">
+              <div className="bg-[#181818] border border-white/10 rounded-xl p-5 flex flex-col justify-center space-y-4">
                 <div>
                   <div className="flex justify-between text-xs font-bold mb-1.5">
                     <span className="text-gray-300">Presupuesto / Honorarios</span>
@@ -1338,7 +1419,7 @@ export default function FichaProyectoClient({
             </div>
           </div>
 
-          <div className="bg-[#1A1A1A] border border-gray-800 rounded-2xl p-6 shadow-xl mb-6">
+          <div className="bg-[#242424] border border-white/10 rounded-2xl p-6 shadow-xl mb-6">
             <h3 className="text-sm font-bold text-white mb-4">
               Historial de Movimientos del Proyecto ({movimientos.length})
             </h3>
@@ -1362,7 +1443,7 @@ export default function FichaProyectoClient({
                         setMovEditando(m);
                         setModalMovimiento(true);
                       }}
-                      className="bg-[#121212] border border-gray-800 hover:border-gray-700 rounded-xl p-4 flex flex-wrap justify-between items-center gap-4 transition-colors cursor-pointer"
+                      className="bg-[#181818] border border-white/10 hover:border-white/25 rounded-xl p-4 flex flex-wrap justify-between items-center gap-4 transition-colors cursor-pointer"
                     >
                       <div className="space-y-1">
                         <div className="flex flex-wrap items-center gap-2">
@@ -1456,7 +1537,7 @@ export default function FichaProyectoClient({
 
       {/* PESTAÑA: COMPRAS */}
       {pestanaActiva === 'compras' && (
-        <div className="bg-[#1A1A1A] border border-gray-800 rounded-2xl p-6 shadow-xl mb-6">
+        <div className="bg-[#242424] border border-white/10 rounded-2xl p-6 shadow-xl mb-6">
           <div className="flex flex-wrap justify-between items-center gap-4 mb-4">
             <div>
               <h2 className="text-base font-bold text-white flex items-center gap-2">
@@ -1481,7 +1562,7 @@ export default function FichaProyectoClient({
           <div className="overflow-x-auto">
             <table className="w-full text-left border-collapse">
               <thead>
-                <tr className="border-b border-gray-800 text-[11px] font-bold uppercase tracking-wider text-gray-400">
+                <tr className="border-b border-white/10 text-[11px] font-bold uppercase tracking-wider text-gray-400">
                   <th className="py-3 px-3">FECHA / FACTURA</th>
                   <th className="py-3 px-3">PROVEEDOR / CONCEPTO</th>
                   <th className="py-3 px-3">IMPORTE ORIGINAL</th>
@@ -1490,7 +1571,7 @@ export default function FichaProyectoClient({
                   <th className="py-3 px-3 text-right">PDF</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-gray-800/70 text-sm">
+              <tbody className="divide-y divide-white/10 text-sm">
                 {compras.length === 0 ? (
                   <tr>
                     <td colSpan={6} className="py-8 text-center text-gray-400 text-xs">
@@ -1505,7 +1586,7 @@ export default function FichaProyectoClient({
                         setCompraEditando(c);
                         setModalCompra(true);
                       }}
-                      className="hover:bg-[#202020] transition-colors cursor-pointer"
+                      className="hover:bg-white/5 transition-colors cursor-pointer"
                     >
                       <td className="py-3 px-3 text-xs">
                         <div className="font-semibold text-white">{c.fecha || '—'}</div>
@@ -1561,7 +1642,7 @@ export default function FichaProyectoClient({
 
       {/* PESTAÑA: TAREAS */}
       {pestanaActiva === 'tareas' && (
-        <div className="bg-[#1A1A1A] border border-gray-800 rounded-2xl p-6 shadow-xl">
+        <div className="bg-[#242424] border border-white/10 rounded-2xl p-6 shadow-xl">
           <div className="flex justify-between items-center mb-4">
             <h2 className="text-base font-bold text-white flex items-center gap-2">
               <CheckSquare className="w-4 h-4 text-[#EAB308]" /> Tareas vinculadas ({tareas.length})
@@ -1590,7 +1671,7 @@ export default function FichaProyectoClient({
                       setTareaEditando(t);
                       setModalTarea(true);
                     }}
-                    className="bg-[#121212] border border-gray-800 hover:border-gray-700 rounded-xl p-3.5 flex flex-wrap justify-between items-center gap-3 text-xs cursor-pointer"
+                    className="bg-[#181818] border border-white/10 hover:border-white/25 rounded-xl p-3.5 flex flex-wrap justify-between items-center gap-3 text-xs cursor-pointer"
                   >
                     <div className="flex items-start gap-3">
                       <button
@@ -1641,14 +1722,17 @@ export default function FichaProyectoClient({
 
       {/* PESTAÑA: VISITAS */}
       {pestanaActiva === 'visitas' && (
-        <div className="bg-[#1A1A1A] border border-gray-800 rounded-2xl p-6 shadow-xl">
+        <div className="bg-[#242424] border border-white/10 rounded-2xl p-6 shadow-xl">
           <div className="flex justify-between items-center mb-4">
             <h2 className="text-base font-bold text-white flex items-center gap-2">
               <Calendar className="w-4 h-4 text-[#EAB308]" /> Visitas y Bitácora ({visitas.length})
             </h2>
             <button
               type="button"
-              onClick={() => setModalNuevaVisita(true)}
+              onClick={() => {
+                setVisitaEditando(null);
+                setModalVisita(true);
+              }}
               className="bg-[#EAB308] hover:bg-[#CA9A04] text-black px-4 py-2 rounded-xl font-bold text-xs inline-flex items-center gap-1.5 cursor-pointer"
             >
               <Plus className="w-4 h-4" /> Agendar visita
@@ -1661,11 +1745,19 @@ export default function FichaProyectoClient({
               {visitas.map((v) => (
                 <div
                   key={v.id}
-                  className="bg-[#121212] border border-gray-800 rounded-xl p-3.5 flex justify-between items-center text-xs"
+                  onClick={() => {
+                    setVisitaEditando(v);
+                    setModalVisita(true);
+                  }}
+                  className="bg-[#181818] border border-white/10 hover:border-white/25 rounded-xl p-3.5 flex justify-between items-center text-xs cursor-pointer transition-colors"
                 >
                   <div>
                     <div className="font-bold text-white">{v.titulo || v.motivo}</div>
-                    <div className="text-gray-400 mt-0.5">{v.fecha}</div>
+                    <div className="text-gray-400 mt-0.5">
+                      {formatearFechaCorta(v.fecha)}{' '}
+                      {v.horario || v.hora ? `· ${v.horario || v.hora} hs` : ''}
+                      {v.responsable ? ` · ${v.responsable}` : ''}
+                    </div>
                   </div>
                   <span className="px-2.5 py-1 rounded-full bg-gray-800 text-gray-200 font-semibold">
                     {v.estado || 'Programada'}
@@ -1679,7 +1771,7 @@ export default function FichaProyectoClient({
 
       {/* PESTAÑA: DOCUMENTOS DEL PROYECTO */}
       {pestanaActiva === 'documentos' && (
-        <div className="bg-[#1A1A1A] border border-gray-800 rounded-2xl p-6 shadow-xl">
+        <div className="bg-[#242424] border border-white/10 rounded-2xl p-6 shadow-xl">
           <div className="flex flex-wrap justify-between items-center gap-4 mb-4">
             <div>
               <h2 className="text-base font-bold text-white flex items-center gap-2">
@@ -1720,7 +1812,7 @@ export default function FichaProyectoClient({
                       setDocEditando(d);
                       setModalDocumento(true);
                     }}
-                    className="bg-[#121212] border border-gray-800 hover:border-gray-700 rounded-xl p-4 flex flex-wrap justify-between items-center gap-3 cursor-pointer transition-colors"
+                    className="bg-[#181818] border border-white/10 hover:border-white/25 rounded-xl p-4 flex flex-wrap justify-between items-center gap-3 cursor-pointer transition-colors"
                   >
                     <div>
                       <div className="flex flex-wrap items-center gap-2">
@@ -1793,242 +1885,242 @@ export default function FichaProyectoClient({
       )}
 
       {/* MODAL EDITAR DATOS DEL PROYECTO */}
-      {modalEditarProy && (
-        <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4 backdrop-blur-sm">
-          <div className="bg-[#1A1A1A] rounded-2xl border border-gray-800 w-full max-w-2xl shadow-2xl p-6 space-y-4 max-h-[92vh] overflow-y-auto">
-            <div className="flex justify-between items-center">
-              <h3 className="text-base font-bold text-white">Editar Datos del Proyecto</h3>
-              <button
-                onClick={() => setModalEditarProy(false)}
-                className="text-gray-400 hover:text-white cursor-pointer"
-              >
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-            <form onSubmit={guardarEdicionProyecto} className="space-y-4">
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-xs font-semibold text-gray-300 mb-1">Nombre *</label>
-                  <input
-                    type="text"
-                    required
-                    value={editNombre}
-                    onChange={(e) => setEditNombre(e.target.value)}
-                    className="w-full bg-[#121212] border border-gray-800 rounded-lg px-3 py-2 text-xs text-white"
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs font-semibold text-gray-300 mb-1">Tipología</label>
-                  <input
-                    type="text"
-                    value={editTipologia}
-                    onChange={(e) => setEditTipologia(e.target.value)}
-                    className="w-full bg-[#121212] border border-gray-800 rounded-lg px-3 py-2 text-xs text-white"
-                  />
-                </div>
-              </div>
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                <div>
-                  <label className="block text-xs font-semibold text-gray-300 mb-1">Cliente</label>
-                  <select
-                    value={editClienteId}
-                    onChange={(e) => setEditClienteId(e.target.value)}
-                    className="w-full bg-[#121212] border border-gray-800 rounded-lg px-3 py-2 text-xs text-white"
-                  >
-                    <option value="">Sin cliente</option>
-                    {clientes.map((c) => (
-                      <option key={c.id} value={c.id}>
-                        {c.nombre}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-                <div>
-                  <label className="block text-xs font-semibold text-gray-300 mb-1">
-                    Responsable
-                  </label>
-                  <select
-                    value={editResponsable}
-                    onChange={(e) => setEditResponsable(e.target.value)}
-                    className="w-full bg-[#121212] border border-gray-800 rounded-lg px-3 py-2 text-xs text-white"
-                  >
-                    <option value="">Sin asignar</option>
-                    {equipo.map((m) => (
-                      <option key={m.id} value={m.nombre}>
-                        {m.nombre}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-                <div>
-                  <label className="block text-xs font-semibold text-gray-300 mb-1">Superficie</label>
-                  <input
-                    type="text"
-                    value={editSuperficie}
-                    onChange={(e) => setEditSuperficie(e.target.value)}
-                    placeholder="Ej. 450 m²"
-                    className="w-full bg-[#121212] border border-gray-800 rounded-lg px-3 py-2 text-xs text-white"
-                  />
-                </div>
-              </div>
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                <div>
-                  <label className="block text-xs font-semibold text-gray-300 mb-1">
-                    Presupuesto USD
-                  </label>
-                  <input
-                    type="text"
-                    value={editPresupuesto}
-                    onChange={(e) => setEditPresupuesto(e.target.value)}
-                    className="w-full bg-[#121212] border border-gray-800 rounded-lg px-3 py-2 text-xs text-white"
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs font-semibold text-gray-300 mb-1">
-                    Fecha Inicio
-                  </label>
-                  <input
-                    type="date"
-                    value={editFechaInicio}
-                    onChange={(e) => setEditFechaInicio(e.target.value)}
-                    className="w-full bg-[#121212] border border-gray-800 rounded-lg px-3 py-2 text-xs text-white [color-scheme:dark]"
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs font-semibold text-gray-300 mb-1">
-                    Fecha Entrega
-                  </label>
-                  <input
-                    type="date"
-                    value={editFechaEntrega}
-                    onChange={(e) => setEditFechaEntrega(e.target.value)}
-                    className="w-full bg-[#121212] border border-gray-800 rounded-lg px-3 py-2 text-xs text-white [color-scheme:dark]"
-                  />
-                </div>
-              </div>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-xs font-semibold text-gray-300 mb-1">
-                    Ubicación / Maps
-                  </label>
-                  <input
-                    type="text"
-                    value={editUbicacion}
-                    onChange={(e) => setEditUbicacion(e.target.value)}
-                    className="w-full bg-[#121212] border border-gray-800 rounded-lg px-3 py-2 text-xs text-white"
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs font-semibold text-gray-300 mb-1">
-                    Carpeta Google Drive
-                  </label>
-                  <input
-                    type="text"
-                    value={editDriveUrl}
-                    onChange={(e) => setEditDriveUrl(e.target.value)}
-                    className="w-full bg-[#121212] border border-gray-800 rounded-lg px-3 py-2 text-xs text-white"
-                  />
-                </div>
-              </div>
-              <div>
-                <label className="block text-xs font-semibold text-gray-300 mb-1">
-                  Descripción y Notas del Proyecto
-                </label>
-                <textarea
-                  rows={3}
-                  value={editDescripcion}
-                  onChange={(e) => setEditDescripcion(e.target.value)}
-                  className="w-full bg-[#121212] border border-gray-800 rounded-lg px-3 py-2 text-xs text-white resize-none"
-                />
-              </div>
-              <div className="flex justify-end gap-2 pt-2">
+      {modalEditarProy &&
+        montado &&
+        createPortal(
+          <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-[9999] p-4">
+            <div className="bg-[#1A1A1A] rounded-2xl border border-gray-800 w-full max-w-2xl shadow-2xl p-6 space-y-4 max-h-[92vh] overflow-y-auto">
+              <div className="flex justify-between items-center">
+                <h3 className="text-base font-bold text-white">Editar Datos del Proyecto</h3>
                 <button
-                  type="button"
                   onClick={() => setModalEditarProy(false)}
-                  className="px-4 py-2 rounded-lg text-xs text-gray-300 hover:text-white cursor-pointer"
+                  className="text-gray-400 hover:text-white cursor-pointer"
                 >
-                  Cancelar
-                </button>
-                <button
-                  type="submit"
-                  disabled={guardandoEdicion}
-                  className="bg-[#EAB308] hover:bg-[#CA9A04] text-black px-5 py-2 rounded-lg text-xs font-bold cursor-pointer"
-                >
-                  {guardandoEdicion ? 'Guardando...' : 'Guardar Cambios'}
+                  <X className="w-5 h-5" />
                 </button>
               </div>
-            </form>
-          </div>
-        </div>
-      )}
-
-      {/* MODAL AGENDAR VISITA */}
-      {modalNuevaVisita && (
-        <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4 backdrop-blur-sm">
-          <div className="bg-[#1A1A1A] rounded-2xl border border-gray-800 w-full max-w-md shadow-2xl p-6 space-y-4">
-            <div className="flex justify-between items-center">
-              <h3 className="text-base font-bold text-white">Agendar Visita o Reunión</h3>
-              <button
-                onClick={() => setModalNuevaVisita(false)}
-                className="text-gray-400 hover:text-white cursor-pointer"
-              >
-                <X className="w-5 h-5" />
-              </button>
+              <form onSubmit={guardarEdicionProyecto} className="space-y-4">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-xs font-semibold text-gray-300 mb-1">Nombre *</label>
+                    <input
+                      type="text"
+                      required
+                      value={editNombre}
+                      onChange={(e) => setEditNombre(e.target.value)}
+                      className="w-full bg-[#121212] border border-gray-800 rounded-lg px-3 py-2 text-xs text-white"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold text-gray-300 mb-1">Tipología</label>
+                    <input
+                      type="text"
+                      value={editTipologia}
+                      onChange={(e) => setEditTipologia(e.target.value)}
+                      className="w-full bg-[#121212] border border-gray-800 rounded-lg px-3 py-2 text-xs text-white"
+                    />
+                  </div>
+                </div>
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                  <div>
+                    <label className="block text-xs font-semibold text-gray-300 mb-1">Cliente</label>
+                    <select
+                      value={editClienteId}
+                      onChange={(e) => setEditClienteId(e.target.value)}
+                      className="w-full bg-[#121212] border border-gray-800 rounded-lg px-3 py-2 text-xs text-white"
+                    >
+                      <option value="">Sin cliente</option>
+                      {clientes.map((c) => (
+                        <option key={c.id} value={c.id}>
+                          {c.nombre}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold text-gray-300 mb-1">
+                      Responsable
+                    </label>
+                    <select
+                      value={editResponsable}
+                      onChange={(e) => setEditResponsable(e.target.value)}
+                      className="w-full bg-[#121212] border border-gray-800 rounded-lg px-3 py-2 text-xs text-white"
+                    >
+                      <option value="">Sin asignar</option>
+                      {equipo.map((m) => (
+                        <option key={m.id} value={m.nombre}>
+                          {m.nombre}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold text-gray-300 mb-1">Superficie</label>
+                    <input
+                      type="text"
+                      value={editSuperficie}
+                      onChange={(e) => setEditSuperficie(e.target.value)}
+                      placeholder="Ej. 450 m²"
+                      className="w-full bg-[#121212] border border-gray-800 rounded-lg px-3 py-2 text-xs text-white"
+                    />
+                  </div>
+                </div>
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                  <div>
+                    <label className="block text-xs font-semibold text-gray-300 mb-1">
+                      Presupuesto USD
+                    </label>
+                    <input
+                      type="text"
+                      value={editPresupuesto}
+                      onChange={(e) => setEditPresupuesto(e.target.value)}
+                      className="w-full bg-[#121212] border border-gray-800 rounded-lg px-3 py-2 text-xs text-white"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold text-gray-300 mb-1">
+                      Fecha Inicio
+                    </label>
+                    <input
+                      type="date"
+                      value={editFechaInicio}
+                      onChange={(e) => setEditFechaInicio(e.target.value)}
+                      className="w-full bg-[#121212] border border-gray-800 rounded-lg px-3 py-2 text-xs text-white [color-scheme:dark]"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold text-gray-300 mb-1">
+                      Fecha Entrega
+                    </label>
+                    <input
+                      type="date"
+                      value={editFechaEntrega}
+                      onChange={(e) => setEditFechaEntrega(e.target.value)}
+                      className="w-full bg-[#121212] border border-gray-800 rounded-lg px-3 py-2 text-xs text-white [color-scheme:dark]"
+                    />
+                  </div>
+                </div>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-xs font-semibold text-gray-300 mb-1">
+                      Ubicación / Maps
+                    </label>
+                    <input
+                      type="text"
+                      value={editUbicacion}
+                      onChange={(e) => setEditUbicacion(e.target.value)}
+                      className="w-full bg-[#121212] border border-gray-800 rounded-lg px-3 py-2 text-xs text-white"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold text-gray-300 mb-1">
+                      Carpeta Google Drive
+                    </label>
+                    <input
+                      type="text"
+                      value={editDriveUrl}
+                      onChange={(e) => setEditDriveUrl(e.target.value)}
+                      className="w-full bg-[#121212] border border-gray-800 rounded-lg px-3 py-2 text-xs text-white"
+                    />
+                  </div>
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-gray-300 mb-1">
+                    Descripción y Notas del Proyecto
+                  </label>
+                  <textarea
+                    rows={3}
+                    value={editDescripcion}
+                    onChange={(e) => setEditDescripcion(e.target.value)}
+                    className="w-full bg-[#121212] border border-gray-800 rounded-lg px-3 py-2 text-xs text-white resize-none"
+                  />
+                </div>
+                <div className="flex justify-end gap-2 pt-2">
+                  <button
+                    type="button"
+                    onClick={() => setModalEditarProy(false)}
+                    className="px-4 py-2 rounded-lg text-xs text-gray-300 hover:text-white cursor-pointer"
+                  >
+                    Cancelar
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={guardandoEdicion}
+                    className="bg-[#EAB308] hover:bg-[#CA9A04] text-black px-5 py-2 rounded-lg text-xs font-bold cursor-pointer"
+                  >
+                    {guardandoEdicion ? 'Guardando...' : 'Guardar Cambios'}
+                  </button>
+                </div>
+              </form>
             </div>
-            <form onSubmit={guardarNuevaVisita} className="space-y-3">
-              <div>
-                <label className="block text-xs font-semibold text-gray-300 mb-1">Motivo *</label>
-                <input
-                  type="text"
-                  required
-                  value={visitaTitulo}
-                  onChange={(e) => setVisitaTitulo(e.target.value)}
-                  className="w-full bg-[#121212] border border-gray-800 rounded-lg px-3 py-2 text-xs text-white"
-                />
-              </div>
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-xs font-semibold text-gray-300 mb-1">Fecha *</label>
-                  <input
-                    type="date"
-                    required
-                    value={visitaFecha}
-                    onChange={(e) => setVisitaFecha(e.target.value)}
-                    className="w-full bg-[#121212] border border-gray-800 rounded-lg px-3 py-2 text-xs text-white [color-scheme:dark]"
-                  />
+          </div>,
+          document.body
+        )}
+
+      {/* MODAL CONFIRMAR ENVÍO A PAPELERA */}
+      {confirmarPapelera &&
+        montado &&
+        createPortal(
+          <div
+            onClick={() => !enviandoPapelera && setConfirmarPapelera(false)}
+            className="fixed inset-0 bg-black/75 flex items-center justify-center z-[9999] p-4"
+          >
+            <div
+              onClick={(e) => e.stopPropagation()}
+              className="bg-[#1A1A1A] border border-gray-800 rounded-2xl w-full max-w-sm p-5 shadow-2xl space-y-4"
+            >
+              <div className="flex items-start gap-3">
+                <div className="w-9 h-9 rounded-xl bg-rose-500/15 border border-rose-500/30 text-rose-400 flex items-center justify-center flex-shrink-0">
+                  <Trash2 className="w-4 h-4" />
                 </div>
-                <div>
-                  <label className="block text-xs font-semibold text-gray-300 mb-1">Hora</label>
-                  <input
-                    type="time"
-                    value={visitaHora}
-                    onChange={(e) => setVisitaHora(e.target.value)}
-                    className="w-full bg-[#121212] border border-gray-800 rounded-lg px-3 py-2 text-xs text-white [color-scheme:dark]"
-                  />
+                <div className="flex-1">
+                  <h3 className="text-sm font-bold text-white">Enviar proyecto a papelera</h3>
+                  <p className="text-xs text-gray-400 mt-1 leading-relaxed">
+                    ¿Querés mover <strong className="text-white">{proyecto.nombre}</strong> ({proyecto.codigo}) a la papelera? Podrás restaurarlo luego si lo necesitás.
+                  </p>
                 </div>
               </div>
-              <div className="flex justify-end gap-2 pt-2">
+
+              <div className="flex justify-end items-center gap-2 pt-2 border-t border-gray-800/80">
                 <button
                   type="button"
-                  onClick={() => setModalNuevaVisita(false)}
-                  className="px-4 py-2 rounded-lg text-xs text-gray-300 hover:text-white cursor-pointer"
+                  disabled={enviandoPapelera}
+                  onClick={() => setConfirmarPapelera(false)}
+                  className="px-3.5 py-2 rounded-xl text-xs font-semibold text-gray-300 hover:text-white hover:bg-gray-800 transition-colors cursor-pointer"
                 >
                   Cancelar
                 </button>
                 <button
-                  type="submit"
-                  disabled={guardandoVisita}
-                  className="bg-[#EAB308] hover:bg-[#CA9A04] text-black px-4 py-2 rounded-lg text-xs font-bold cursor-pointer"
+                  type="button"
+                  disabled={enviandoPapelera}
+                  onClick={enviarProyectoAPapelera}
+                  className="px-4 py-2 rounded-xl text-xs font-bold bg-rose-600 hover:bg-rose-500 text-white transition-colors cursor-pointer disabled:opacity-50"
                 >
-                  {guardandoVisita ? 'Agendando...' : 'Agendar'}
+                  {enviandoPapelera ? 'Moviendo...' : 'Enviar a papelera'}
                 </button>
               </div>
-            </form>
-          </div>
-        </div>
-      )}
+            </div>
+          </div>,
+          document.body
+        )}
 
       {/* MODALES COMPARTIDOS */}
+      <ModalVisita
+        abierto={modalVisita}
+        onClose={() => {
+          setModalVisita(false);
+          setVisitaEditando(null);
+        }}
+        onGuardado={(msg) => {
+          mostrarToast(msg);
+          router.refresh();
+        }}
+        visitaEditando={visitaEditando}
+        proyectos={[proyecto]}
+        equipo={equipo}
+        proyectoFijoCodigo={proyecto.codigo}
+      />
+
       <ModalDocumento
         abierto={modalDocumento}
         onClose={() => {
@@ -2094,12 +2186,15 @@ export default function FichaProyectoClient({
         monedaInicial="ARS"
       />
 
-      {toast && (
-        <div className="fixed bottom-8 left-1/2 -translate-x-1/2 bg-[#161616] border border-gray-700/80 shadow-2xl rounded-xl px-5 py-3.5 flex items-center gap-3 z-50">
-          <CheckCircle2 className="w-5 h-5 text-emerald-400" />
-          <span className="text-sm font-semibold text-white">{toast}</span>
-        </div>
-      )}
+      {toast &&
+        montado &&
+        createPortal(
+          <div className="fixed bottom-8 left-1/2 -translate-x-1/2 bg-[#161616] border border-gray-700/80 shadow-2xl rounded-xl px-5 py-3.5 flex items-center gap-3 z-[9999]">
+            <CheckCircle2 className="w-5 h-5 text-emerald-400" />
+            <span className="text-sm font-semibold text-white">{toast}</span>
+          </div>,
+          document.body
+        )}
     </div>
   );
 }

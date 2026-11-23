@@ -1,8 +1,10 @@
 "use client";
 
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import { useRouter } from 'next/navigation';
 import { supabase } from '@/lib/supabase';
+import { moverAPapelera } from '@/lib/papelera';
 import {
   Plus, Search, Upload, Download, Lock, ArrowRight, X,
   CheckCircle2, Trash2, MessageCircle, MapPin, Globe, Mail,
@@ -41,6 +43,7 @@ export default function ProveedoresClient({
   proveedoresIniciales: any[];
 }) {
   const router = useRouter();
+  const [montado, setMontado] = useState(false);
 
   const [busqueda, setBusqueda] = useState('');
   const [filtroRubro, setFiltroRubro] = useState('Todos');
@@ -63,6 +66,10 @@ export default function ProveedoresClient({
   const [email, setEmail] = useState('');
   const [telefono, setTelefono] = useState('');
   const [notas, setNotas] = useState('');
+
+  useEffect(() => {
+    setMontado(true);
+  }, []);
 
   const mostrarToast = (msg: string) => {
     setToast(msg);
@@ -172,15 +179,23 @@ export default function ProveedoresClient({
   const eliminarProveedor = async () => {
     if (!proveedorEditando) return;
     setCargando(true);
-    const { error } = await supabase.from('proveedores').delete().eq('id', proveedorEditando.id);
-    setCargando(false);
-
-    if (!error) {
+    try {
+      await moverAPapelera({
+        tabla: 'proveedores',
+        modulo: 'Proveedores',
+        titulo: proveedorEditando.nombre || 'Proveedor sin nombre',
+        subtitulo: `${proveedorEditando.rubro || ''} ${
+          proveedorEditando.codigo ? `· ${proveedorEditando.codigo}` : ''
+        }`.trim(),
+        registro: proveedorEditando,
+      });
       setModalAbierto(false);
-      mostrarToast('Proveedor eliminado');
+      mostrarToast('Proveedor enviado a papelera');
       router.refresh();
-    } else {
-      alert('Error al eliminar proveedor: ' + error.message);
+    } catch (error: any) {
+      alert('Error al mover a papelera: ' + error.message);
+    } finally {
+      setCargando(false);
     }
   };
 
@@ -206,12 +221,12 @@ export default function ProveedoresClient({
   const proveedoresPaginados = proveedoresFiltrados.slice(inicio, inicio + filasPorPagina);
 
   return (
-    <div className="min-h-screen bg-[#121212] text-white p-8 font-sans">
+    <div className="min-h-screen text-white p-8 font-sans">
       {/* CABECERA */}
       <div className="flex flex-wrap justify-between items-start gap-4 mb-6">
         <div>
           <h1 className="text-3xl font-extrabold text-white tracking-tight">Proveedores</h1>
-          <p className="text-sm text-gray-400 mt-1">
+          <p className="text-sm text-gray-300 mt-1">
             Gestión de proveedores, rubros, datos de contacto y acceso a su ficha completa
           </p>
         </div>
@@ -225,7 +240,7 @@ export default function ProveedoresClient({
       </div>
 
       {/* PANEL DE BÚSQUEDA Y FILTROS */}
-      <div className="bg-[#1A1A1A] border border-gray-800 rounded-2xl p-4 mb-6 shadow-xl">
+      <div className="bg-[#242424]/85 backdrop-blur-md border border-white/10 rounded-2xl p-4 mb-6 shadow-xl">
         <div className="flex flex-wrap items-center gap-3">
           <div className="relative flex-1 min-w-[260px]">
             <Search className="w-4 h-4 text-gray-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
@@ -237,7 +252,7 @@ export default function ProveedoresClient({
                 setPagina(1);
               }}
               placeholder="Buscar proveedor por código (PRV-001), razón social, CUIT, rubro o contacto..."
-              className="w-full bg-[#121212] border border-gray-800 rounded-xl pl-10 pr-4 py-2.5 text-sm text-white placeholder-gray-500 focus:outline-none focus:border-gray-600"
+              className="w-full bg-[#181818]/90 border border-white/10 rounded-xl pl-10 pr-4 py-2.5 text-sm text-white placeholder-gray-400 focus:outline-none focus:border-white/25"
             />
           </div>
 
@@ -247,7 +262,7 @@ export default function ProveedoresClient({
               setFiltroRubro(e.target.value);
               setPagina(1);
             }}
-            className="bg-[#121212] border border-gray-800 rounded-xl px-3.5 py-2.5 text-xs font-medium text-gray-200 focus:outline-none focus:border-gray-600 max-w-[240px]"
+            className="bg-[#181818]/90 border border-white/10 rounded-xl px-3.5 py-2.5 text-xs font-semibold text-gray-200 focus:outline-none max-w-[240px] cursor-pointer"
           >
             <option value="Todos">Rubro: Todos</option>
             {RUBROS_OBRA_CIVIL.map((r) => (
@@ -257,23 +272,23 @@ export default function ProveedoresClient({
             ))}
           </select>
 
-          <div className="w-px h-6 bg-gray-800 hidden xl:block" />
+          <div className="w-px h-6 bg-white/10 hidden xl:block" />
 
-          <button className="bg-[#181818] hover:bg-gray-800 border border-gray-800 text-gray-300 hover:text-white px-3.5 py-2.5 rounded-xl text-xs font-medium flex items-center gap-2 cursor-pointer">
+          <button className="bg-[#181818]/90 hover:bg-white/10 border border-white/10 text-gray-200 px-3.5 py-2.5 rounded-xl text-xs font-medium flex items-center gap-2 cursor-pointer">
             <Upload className="w-3.5 h-3.5" /> Importar
           </button>
-          <button className="bg-[#181818] hover:bg-gray-800 border border-gray-800 text-gray-300 hover:text-white px-3.5 py-2.5 rounded-xl text-xs font-medium flex items-center gap-2 cursor-pointer">
+          <button className="bg-[#181818]/90 hover:bg-white/10 border border-white/10 text-gray-200 px-3.5 py-2.5 rounded-xl text-xs font-medium flex items-center gap-2 cursor-pointer">
             <Download className="w-3.5 h-3.5" /> Exportar
           </button>
-          <div className="w-px h-6 bg-gray-800 hidden xl:block" />
-          <button className="bg-[#181818] hover:bg-gray-800 border border-gray-800 text-gray-300 hover:text-white px-3.5 py-2.5 rounded-xl text-xs font-medium flex items-center gap-2 cursor-pointer">
+          <div className="w-px h-6 bg-white/10 hidden xl:block" />
+          <button className="bg-[#181818]/90 hover:bg-white/10 border border-white/10 text-gray-200 px-3.5 py-2.5 rounded-xl text-xs font-medium flex items-center gap-2 cursor-pointer">
             <Lock className="w-3.5 h-3.5" /> Restringir vista
           </button>
         </div>
       </div>
 
       {/* TABLA DE PROVEEDORES */}
-      <div className="bg-[#1A1A1A] border border-gray-800 rounded-2xl p-5 shadow-xl">
+      <div className="bg-[#242424]/85 backdrop-blur-md border border-white/10 rounded-2xl p-5 shadow-2xl">
         <h2 className="text-sm font-bold text-white mb-4">
           Proveedores ({proveedoresFiltrados.length})
         </h2>
@@ -281,14 +296,14 @@ export default function ProveedoresClient({
         <div className="overflow-x-auto">
           <table className="w-full text-left border-collapse">
             <thead>
-              <tr className="border-b border-gray-800 text-[11px] font-bold uppercase tracking-wider text-gray-400">
+              <tr className="border-b border-white/10 text-[11px] font-bold uppercase tracking-wider text-gray-400">
                 <th className="py-3 px-3">PROVEEDOR</th>
                 <th className="py-3 px-3">RUBRO</th>
                 <th className="py-3 px-3">CONTACTO</th>
                 <th className="py-3 px-3 text-right"></th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-gray-800/70 text-sm">
+            <tbody className="divide-y divide-white/10 text-sm">
               {proveedoresPaginados.length === 0 ? (
                 <tr>
                   <td colSpan={4} className="py-10 text-center text-gray-400 text-xs">
@@ -306,10 +321,12 @@ export default function ProveedoresClient({
                     <tr
                       key={p.id}
                       onClick={() => abrirModalEditar(p)}
-                      className="hover:bg-[#202020] transition-colors cursor-pointer"
+                      className="group cursor-pointer hover:bg-[#EAB308]/10 hover:outline hover:outline-1 hover:-outline-offset-1 hover:outline-[#EAB308]/60 transition-all"
                     >
                       <td className="py-4 px-3">
-                        <div className="font-bold text-white">{p.nombre}</div>
+                        <div className="font-bold text-white group-hover:text-[#EAB308] transition-colors">
+                          {p.nombre}
+                        </div>
                         <div className="flex flex-wrap items-center gap-2.5 text-[11px] text-gray-400 mt-0.5">
                           <span>{p.codigo}</span>
                           {mapsUrl && (
@@ -384,7 +401,7 @@ export default function ProveedoresClient({
                             e.stopPropagation();
                             abrirModalEditar(p);
                           }}
-                          className="px-4 py-2 rounded-xl border border-gray-700 hover:bg-gray-800 text-xs font-semibold text-white inline-flex items-center gap-1.5 transition-colors cursor-pointer"
+                          className="px-4 py-1.5 rounded-xl border border-white/20 bg-white/5 text-white group-hover:border-[#EAB308] group-hover:bg-[#EAB308] group-hover:text-black text-xs font-semibold inline-flex items-center gap-1.5 transition-all cursor-pointer"
                         >
                           Abrir ficha <ArrowRight className="w-3.5 h-3.5" />
                         </button>
@@ -398,7 +415,7 @@ export default function ProveedoresClient({
         </div>
 
         {/* PAGINACIÓN */}
-        <div className="mt-4 pt-4 border-t border-gray-800/80 flex flex-wrap justify-between items-center gap-4 text-xs text-gray-400">
+        <div className="mt-4 pt-4 border-t border-white/10 flex flex-wrap justify-between items-center gap-4 text-xs text-gray-300">
           <div className="flex items-center gap-3">
             <span>
               Mostrando{' '}
@@ -417,7 +434,7 @@ export default function ProveedoresClient({
                   setFilasPorPagina(Number(e.target.value));
                   setPagina(1);
                 }}
-                className="bg-[#121212] border border-gray-800 rounded-lg px-2 py-1 text-white"
+                className="bg-[#181818] border border-white/15 rounded-lg px-2 py-1 text-white"
               >
                 <option value={10}>10</option>
                 <option value={20}>20</option>
@@ -430,7 +447,7 @@ export default function ProveedoresClient({
             <button
               onClick={() => setPagina((p) => Math.max(1, p - 1))}
               disabled={pagina === 1}
-              className="px-3 py-1.5 rounded-lg bg-[#121212] border border-gray-800 hover:bg-gray-800 disabled:opacity-40 cursor-pointer"
+              className="px-3 py-1.5 rounded-lg bg-[#181818] border border-white/10 hover:bg-white/10 disabled:opacity-40 cursor-pointer"
             >
               ‹ Anterior
             </button>
@@ -440,7 +457,7 @@ export default function ProveedoresClient({
             <button
               onClick={() => setPagina((p) => Math.min(totalPaginas, p + 1))}
               disabled={pagina === totalPaginas}
-              className="px-3 py-1.5 rounded-lg bg-[#121212] border border-gray-800 hover:bg-gray-800 disabled:opacity-40 cursor-pointer"
+              className="px-3 py-1.5 rounded-lg bg-[#181818] border border-white/10 hover:bg-white/10 disabled:opacity-40 cursor-pointer"
             >
               Siguiente ›
             </button>
@@ -448,255 +465,259 @@ export default function ProveedoresClient({
         </div>
       </div>
 
-      {/* ================================================================= */}
-      {/* MODAL: NUEVO / EDITAR PROVEEDOR                                   */}
-      {/* ================================================================= */}
-      {modalAbierto && (
-        <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4 backdrop-blur-sm">
-          <div className="bg-[#1A1A1A] rounded-2xl border border-gray-800 w-full max-w-2xl shadow-2xl overflow-hidden flex flex-col max-h-[92vh]">
-            <div className="px-6 pt-6 pb-4 flex justify-between items-start">
-              <div>
-                <h2 className="text-lg font-bold text-white">
-                  {proveedorEditando ? 'Ficha de Proveedor' : 'Nuevo Proveedor'}
-                </h2>
-                <p className="text-xs text-gray-400 mt-0.5">
-                  Código de identificación, rubro, datos fiscales y contacto técnico
-                </p>
-              </div>
-              <button onClick={() => setModalAbierto(false)} className="text-gray-400 hover:text-white cursor-pointer">
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-
-            <form onSubmit={guardarProveedor} className="px-6 pb-6 overflow-y-auto space-y-4">
-              {/* Código + Nombre Comercial */}
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+      {/* MODAL: NUEVO / EDITAR PROVEEDOR */}
+      {modalAbierto &&
+        montado &&
+        createPortal(
+          <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-[9999] p-4 backdrop-blur-sm">
+            <div className="bg-[#1A1A1A] rounded-2xl border border-gray-800 w-full max-w-2xl shadow-2xl overflow-hidden flex flex-col max-h-[92vh]">
+              <div className="px-6 pt-6 pb-4 flex justify-between items-start border-b border-gray-800">
                 <div>
-                  <label className="block text-xs font-semibold text-gray-300 mb-1.5">
-                    Código Proveedor
-                  </label>
-                  <input
-                    type="text"
-                    value={codigo}
-                    onChange={(e) => setCodigo(e.target.value)}
-                    className="w-full bg-[#121212] border border-[#EAB308]/40 rounded-lg px-3 py-2.5 text-sm font-bold text-[#EAB308]"
-                  />
+                  <h2 className="text-lg font-bold text-white">
+                    {proveedorEditando ? 'Ficha de Proveedor' : 'Nuevo Proveedor'}
+                  </h2>
+                  <p className="text-xs text-gray-400 mt-0.5">
+                    Código de identificación, rubro, datos fiscales y contacto técnico
+                  </p>
                 </div>
-                <div className="md:col-span-2">
-                  <label className="block text-xs font-semibold text-gray-300 mb-1.5">
-                    Nombre Comercial / Razón Social *
-                  </label>
-                  <input
-                    type="text"
-                    required
-                    value={nombre}
-                    onChange={(e) => setNombre(e.target.value)}
-                    placeholder="Ej. Hormigones del Plata S.A."
-                    className="w-full bg-[#121212] border border-gray-700/80 rounded-lg px-3 py-2.5 text-sm text-white placeholder-gray-500"
-                  />
-                </div>
+                <button
+                  onClick={() => setModalAbierto(false)}
+                  className="text-gray-400 hover:text-white cursor-pointer"
+                >
+                  <X className="w-5 h-5" />
+                </button>
               </div>
 
-              {/* Rubro + CUIT */}
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-xs font-semibold text-gray-300 mb-1.5">
-                    Rubro / Gremio / Especialidad
-                  </label>
-                  <select
-                    value={rubro}
-                    onChange={(e) => setRubro(e.target.value)}
-                    className="w-full bg-[#121212] border border-gray-700/80 rounded-lg px-3 py-2.5 text-sm text-white"
-                  >
-                    {RUBROS_OBRA_CIVIL.map((r) => (
-                      <option key={r} value={r}>
-                        {r}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-                <div>
-                  <label className="block text-xs font-semibold text-gray-300 mb-1.5">
-                    CUIT / RUT / ID Fiscal
-                  </label>
-                  <input
-                    type="text"
-                    value={cuit}
-                    onChange={(e) => setCuit(e.target.value)}
-                    placeholder="Ej. 30-65891204-2"
-                    className="w-full bg-[#121212] border border-gray-700/80 rounded-lg px-3 py-2.5 text-sm text-white placeholder-gray-500"
-                  />
-                </div>
-              </div>
-
-              {/* Persona de Contacto + Ubicación (Google Maps) */}
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-xs font-semibold text-gray-300 mb-1.5">
-                    Persona de Contacto
-                  </label>
-                  <input
-                    type="text"
-                    value={contactoNombre}
-                    onChange={(e) => setContactoNombre(e.target.value)}
-                    placeholder="Ej. Ing. Carlos Mendoza"
-                    className="w-full bg-[#121212] border border-gray-700/80 rounded-lg px-3 py-2.5 text-sm text-white placeholder-gray-500"
-                  />
-                </div>
-                <div>
-                  <div className="flex items-center justify-between mb-1.5">
-                    <label className="block text-xs font-semibold text-gray-300">
-                      Dirección / Showroom / Corralón
+              <form onSubmit={guardarProveedor} className="px-6 py-5 overflow-y-auto space-y-4">
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                  <div>
+                    <label className="block text-xs font-semibold text-gray-300 mb-1.5">
+                      Código Proveedor
                     </label>
-                    {obtenerUrlMaps(direccion) && (
-                      <a
-                        href={obtenerUrlMaps(direccion)!}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="text-[11px] font-bold text-[#EAB308] hover:underline inline-flex items-center gap-1"
-                      >
-                        <MapPin className="w-3 h-3" /> Abrir Maps
-                      </a>
-                    )}
+                    <input
+                      type="text"
+                      value={codigo}
+                      onChange={(e) => setCodigo(e.target.value)}
+                      className="w-full bg-[#121212] border border-[#EAB308]/40 rounded-lg px-3 py-2.5 text-sm font-bold text-[#EAB308]"
+                    />
                   </div>
-                  <input
-                    type="text"
-                    value={direccion}
-                    onChange={(e) => setDireccion(e.target.value)}
-                    placeholder="Dirección o enlace de Google Maps"
-                    className="w-full bg-[#121212] border border-gray-700/80 rounded-lg px-3 py-2.5 text-sm text-white placeholder-gray-500"
-                  />
+                  <div className="md:col-span-2">
+                    <label className="block text-xs font-semibold text-gray-300 mb-1.5">
+                      Nombre Comercial / Razón Social *
+                    </label>
+                    <input
+                      type="text"
+                      required
+                      value={nombre}
+                      onChange={(e) => setNombre(e.target.value)}
+                      placeholder="Ej. Hormigones del Plata S.A."
+                      className="w-full bg-[#121212] border border-gray-700/80 rounded-lg px-3 py-2.5 text-sm text-white placeholder-gray-500"
+                    />
+                  </div>
                 </div>
-              </div>
 
-              {/* Email (Gmail) + Teléfono (WhatsApp) */}
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div>
-                  <div className="flex items-center justify-between mb-1.5">
-                    <label className="block text-xs font-semibold text-gray-300">Email</label>
-                    {obtenerUrlGmail(email) && (
-                      <a
-                        href={obtenerUrlGmail(email)!}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="text-[11px] font-bold text-rose-400 hover:underline inline-flex items-center gap-1"
-                      >
-                        <Mail className="w-3 h-3" /> Enviar Gmail
-                      </a>
-                    )}
-                  </div>
-                  <input
-                    type="email"
-                    value={email}
-                    onChange={(e) => setEmail(e.target.value)}
-                    placeholder="ventas@proveedor.com"
-                    className="w-full bg-[#121212] border border-gray-700/80 rounded-lg px-3 py-2.5 text-sm text-white placeholder-gray-500"
-                  />
-                </div>
-                <div>
-                  <div className="flex items-center justify-between mb-1.5">
-                    <label className="block text-xs font-semibold text-gray-300">Teléfono</label>
-                    {obtenerUrlWhatsapp(telefono) && (
-                      <a
-                        href={obtenerUrlWhatsapp(telefono)!}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="text-[11px] font-bold text-emerald-400 hover:underline inline-flex items-center gap-1"
-                      >
-                        <MessageCircle className="w-3 h-3" /> Abrir WhatsApp
-                      </a>
-                    )}
-                  </div>
-                  <input
-                    type="text"
-                    value={telefono}
-                    onChange={(e) => setTelefono(e.target.value)}
-                    placeholder="+54 / +52 / +34 ..."
-                    className="w-full bg-[#121212] border border-gray-700/80 rounded-lg px-3 py-2.5 text-sm text-white placeholder-gray-500"
-                  />
-                </div>
-              </div>
-
-              {/* Página Web */}
-              <div>
-                <div className="flex items-center justify-between mb-1.5">
-                  <label className="block text-xs font-semibold text-gray-300">Página Web</label>
-                  {obtenerUrlWeb(paginaWeb) && (
-                    <a
-                      href={obtenerUrlWeb(paginaWeb)!}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="text-[11px] font-bold text-cyan-400 hover:underline inline-flex items-center gap-1"
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-xs font-semibold text-gray-300 mb-1.5">
+                      Rubro / Gremio / Especialidad
+                    </label>
+                    <select
+                      value={rubro}
+                      onChange={(e) => setRubro(e.target.value)}
+                      className="w-full bg-[#121212] border border-gray-700/80 rounded-lg px-3 py-2.5 text-sm text-white"
                     >
-                      <Globe className="w-3 h-3" /> Abrir Web
-                    </a>
-                  )}
+                      {RUBROS_OBRA_CIVIL.map((r) => (
+                        <option key={r} value={r}>
+                          {r}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold text-gray-300 mb-1.5">
+                      CUIT / RUT / ID Fiscal
+                    </label>
+                    <input
+                      type="text"
+                      value={cuit}
+                      onChange={(e) => setCuit(e.target.value)}
+                      placeholder="Ej. 30-65891204-2"
+                      className="w-full bg-[#121212] border border-gray-700/80 rounded-lg px-3 py-2.5 text-sm text-white placeholder-gray-500"
+                    />
+                  </div>
                 </div>
-                <input
-                  type="text"
-                  value={paginaWeb}
-                  onChange={(e) => setPaginaWeb(e.target.value)}
-                  placeholder="https://www.proveedor.com.ar"
-                  className="w-full bg-[#121212] border border-gray-700/80 rounded-lg px-3 py-2.5 text-sm text-white placeholder-gray-500"
-                />
-              </div>
 
-              {/* Condiciones Comerciales / Notas */}
-              <div>
-                <label className="block text-xs font-semibold text-gray-300 mb-1.5">
-                  Condiciones Comerciales / Notas
-                </label>
-                <textarea
-                  rows={3}
-                  value={notas}
-                  onChange={(e) => setNotas(e.target.value)}
-                  placeholder="Plazos de entrega, acopio en planta, sucursal..."
-                  className="w-full bg-[#121212] border border-gray-700/80 rounded-lg px-3 py-2.5 text-sm text-white placeholder-gray-500 resize-none"
-                />
-              </div>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-xs font-semibold text-gray-300 mb-1.5">
+                      Persona de Contacto
+                    </label>
+                    <input
+                      type="text"
+                      value={contactoNombre}
+                      onChange={(e) => setContactoNombre(e.target.value)}
+                      placeholder="Ej. Ing. Carlos Mendoza"
+                      className="w-full bg-[#121212] border border-gray-700/80 rounded-lg px-3 py-2.5 text-sm text-white placeholder-gray-500"
+                    />
+                  </div>
+                  <div>
+                    <div className="flex items-center justify-between mb-1.5">
+                      <label className="block text-xs font-semibold text-gray-300">
+                        Dirección / Showroom / Corralón
+                      </label>
+                      {obtenerUrlMaps(direccion) && (
+                        <a
+                          href={obtenerUrlMaps(direccion)!}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-[11px] font-bold text-[#EAB308] hover:underline inline-flex items-center gap-1"
+                        >
+                          <MapPin className="w-3 h-3" /> Abrir Maps
+                        </a>
+                      )}
+                    </div>
+                    <input
+                      type="text"
+                      value={direccion}
+                      onChange={(e) => setDireccion(e.target.value)}
+                      placeholder="Dirección o enlace de Google Maps"
+                      className="w-full bg-[#121212] border border-gray-700/80 rounded-lg px-3 py-2.5 text-sm text-white placeholder-gray-500"
+                    />
+                  </div>
+                </div>
 
-              {/* Pie */}
-              <div className="flex justify-between items-center pt-3 border-t border-gray-800/80">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div>
+                    <div className="flex items-center justify-between mb-1.5">
+                      <label className="block text-xs font-semibold text-gray-300">Email</label>
+                      {obtenerUrlGmail(email) && (
+                        <a
+                          href={obtenerUrlGmail(email)!}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-[11px] font-bold text-rose-400 hover:underline inline-flex items-center gap-1"
+                        >
+                          <Mail className="w-3 h-3" /> Enviar Gmail
+                        </a>
+                      )}
+                    </div>
+                    <input
+                      type="email"
+                      value={email}
+                      onChange={(e) => setEmail(e.target.value)}
+                      placeholder="ventas@proveedor.com"
+                      className="w-full bg-[#121212] border border-gray-700/80 rounded-lg px-3 py-2.5 text-sm text-white placeholder-gray-500"
+                    />
+                  </div>
+                  <div>
+                    <div className="flex items-center justify-between mb-1.5">
+                      <label className="block text-xs font-semibold text-gray-300">Teléfono</label>
+                      {obtenerUrlWhatsapp(telefono) && (
+                        <a
+                          href={obtenerUrlWhatsapp(telefono)!}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-[11px] font-bold text-emerald-400 hover:underline inline-flex items-center gap-1"
+                        >
+                          <MessageCircle className="w-3 h-3" /> Abrir WhatsApp
+                        </a>
+                      )}
+                    </div>
+                    <input
+                      type="text"
+                      value={telefono}
+                      onChange={(e) => setTelefono(e.target.value)}
+                      placeholder="+54 / +52 / +34 ..."
+                      className="w-full bg-[#121212] border border-gray-700/80 rounded-lg px-3 py-2.5 text-sm text-white placeholder-gray-500"
+                    />
+                  </div>
+                </div>
+
                 <div>
-                  {proveedorEditando && (
+                  <div className="flex items-center justify-between mb-1.5">
+                    <label className="block text-xs font-semibold text-gray-300">Página Web</label>
+                    {obtenerUrlWeb(paginaWeb) && (
+                      <a
+                        href={obtenerUrlWeb(paginaWeb)!}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-[11px] font-bold text-cyan-400 hover:underline inline-flex items-center gap-1"
+                      >
+                        <Globe className="w-3 h-3" /> Abrir Web
+                      </a>
+                    )}
+                  </div>
+                  <input
+                    type="text"
+                    value={paginaWeb}
+                    onChange={(e) => setPaginaWeb(e.target.value)}
+                    placeholder="https://www.proveedor.com.ar"
+                    className="w-full bg-[#121212] border border-gray-700/80 rounded-lg px-3 py-2.5 text-sm text-white placeholder-gray-500"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-gray-300 mb-1.5">
+                    Condiciones Comerciales / Notas
+                  </label>
+                  <textarea
+                    rows={3}
+                    value={notas}
+                    onChange={(e) => setNotas(e.target.value)}
+                    placeholder="Plazos de entrega, acopio en planta, sucursal..."
+                    className="w-full bg-[#121212] border border-gray-700/80 rounded-lg px-3 py-2.5 text-sm text-white placeholder-gray-500 resize-none"
+                  />
+                </div>
+
+                <div className="flex justify-between items-center pt-3 border-t border-gray-800/80">
+                  <div>
+                    {proveedorEditando && (
+                      <button
+                        type="button"
+                        onClick={eliminarProveedor}
+                        disabled={cargando}
+                        className="border border-transparent hover:border-red-500/40 hover:bg-red-500/15 text-red-500 px-4 py-2.5 rounded-lg font-medium text-sm flex items-center gap-2 cursor-pointer"
+                      >
+                        <Trash2 className="w-4 h-4" /> Enviar a papelera
+                      </button>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-3">
                     <button
                       type="button"
-                      onClick={eliminarProveedor}
-                      disabled={cargando}
-                      className="border border-transparent hover:border-red-500/40 hover:bg-red-500/15 text-red-500 px-4 py-2.5 rounded-lg font-medium text-sm flex items-center gap-2 cursor-pointer"
+                      onClick={() => setModalAbierto(false)}
+                      className="border border-transparent hover:border-gray-500/40 hover:bg-gray-500/15 text-gray-300 hover:text-white px-4 py-2.5 rounded-lg font-medium text-sm cursor-pointer"
                     >
-                      <Trash2 className="w-4 h-4" /> Eliminar proveedor
+                      Cancelar
                     </button>
-                  )}
+                    <button
+                      type="submit"
+                      disabled={cargando}
+                      className="bg-[#EAB308] hover:bg-[#CA9A04] text-black px-5 py-2.5 rounded-lg font-bold text-sm cursor-pointer"
+                    >
+                      {cargando
+                        ? 'Guardando...'
+                        : proveedorEditando
+                        ? 'Guardar Cambios'
+                        : 'Crear Proveedor'}
+                    </button>
+                  </div>
                 </div>
-                <div className="flex items-center gap-3">
-                  <button
-                    type="button"
-                    onClick={() => setModalAbierto(false)}
-                    className="border border-transparent hover:border-gray-500/40 hover:bg-gray-500/15 text-gray-300 hover:text-white px-4 py-2.5 rounded-lg font-medium text-sm cursor-pointer"
-                  >
-                    Cancelar
-                  </button>
-                  <button
-                    type="submit"
-                    disabled={cargando}
-                    className="bg-[#EAB308] hover:bg-[#CA9A04] text-black px-5 py-2.5 rounded-lg font-bold text-sm cursor-pointer"
-                  >
-                    {cargando ? 'Guardando...' : proveedorEditando ? 'Guardar Cambios' : 'Crear Proveedor'}
-                  </button>
-                </div>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
+              </form>
+            </div>
+          </div>,
+          document.body
+        )}
 
-      {toast && (
-        <div className="fixed bottom-8 left-1/2 -translate-x-1/2 bg-[#161616] border border-gray-700/80 shadow-2xl rounded-xl px-5 py-3.5 flex items-center gap-3 z-50">
-          <CheckCircle2 className="w-5 h-5 text-emerald-400" />
-          <span className="text-sm font-semibold text-white">{toast}</span>
-        </div>
-      )}
+      {toast &&
+        montado &&
+        createPortal(
+          <div className="fixed bottom-8 left-1/2 -translate-x-1/2 bg-[#161616] border border-gray-700/80 shadow-2xl rounded-xl px-5 py-3.5 flex items-center gap-3 z-[9999]">
+            <CheckCircle2 className="w-5 h-5 text-emerald-400" />
+            <span className="text-sm font-semibold text-white">{toast}</span>
+          </div>,
+          document.body
+        )}
     </div>
   );
 }

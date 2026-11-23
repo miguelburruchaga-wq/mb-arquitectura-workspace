@@ -4,6 +4,8 @@ import { useState, useMemo, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { supabase } from '@/lib/supabase';
+import { moverAPapelera } from '@/lib/papelera';
+import ModalTarea from '@/components/ModalTarea';
 import {
   Calendar,
   ChevronLeft,
@@ -17,6 +19,7 @@ import {
   Bell,
   CheckCircle2,
   ChevronDown,
+  Plus,
 } from 'lucide-react';
 
 type FiltroAgenda = 'Todo' | 'Visitas' | 'Tareas' | 'Proyectos';
@@ -55,11 +58,26 @@ export default function AgendaClient({
   const [vista, setVista] = useState<VistaAgenda>('Mes');
   const [fechaCursor, setFechaCursor] = useState<Date>(() => new Date());
 
-  // Modales de Visita
+  // Modales de Visita y Tarea
   const [visitaResumen, setVisitaResumen] = useState<any | null>(null);
   const [visitaEditando, setVisitaEditando] = useState<any | null>(null);
+  const [modalNuevaVisita, setModalNuevaVisita] = useState(false);
+  const [modalNuevaTarea, setModalNuevaTarea] = useState(false);
   const [cargando, setCargando] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
+
+  // Campos del modal Nueva Visita
+  const [nuevaProyectoCodigo, setNuevaProyectoCodigo] = useState(proyectos[0]?.codigo || '');
+  const [nuevaCategoria, setNuevaCategoria] = useState('Visita de obra');
+  const [nuevaResponsable, setNuevaResponsable] = useState('Alejandro Fego');
+  const [nuevaTitulo, setNuevaTitulo] = useState('');
+  const [nuevaFecha, setNuevaFecha] = useState(() => new Date().toISOString().split('T')[0]);
+  const [nuevaHorario, setNuevaHorario] = useState('10:00');
+  const [nuevaEstado, setNuevaEstado] = useState('Programada');
+  const [nuevaActa, setNuevaActa] = useState('');
+  const [nuevaAlarmaActiva, setNuevaAlarmaActiva] = useState(false);
+  const [nuevaAlarmaFecha, setNuevaAlarmaFecha] = useState(() => new Date().toISOString().split('T')[0]);
+  const [nuevaAlarmaHorario, setNuevaAlarmaHorario] = useState('09:00');
 
   // Campos del modal Editar Visita
   const [editCategoria, setEditCategoria] = useState('Visita de obra');
@@ -216,6 +234,57 @@ export default function AgendaClient({
   const entregasPendientes = entregasDelMes.filter((p) => p.estado !== 'Finalizado').length;
   const entregasHechas = entregasDelMes.filter((p) => p.estado === 'Finalizado').length;
 
+  // Abrir modal Nueva Visita
+  const abrirModalNuevaVisita = () => {
+    setNuevaProyectoCodigo(proyectos[0]?.codigo || '');
+    setNuevaCategoria('Visita de obra');
+    setNuevaResponsable('Alejandro Fego');
+    setNuevaTitulo('');
+    setNuevaFecha(hoyClave);
+    setNuevaHorario('10:00');
+    setNuevaEstado('Programada');
+    setNuevaActa('');
+    setNuevaAlarmaActiva(false);
+    setNuevaAlarmaFecha(hoyClave);
+    setNuevaAlarmaHorario('09:00');
+    setModalNuevaVisita(true);
+  };
+
+  const crearNuevaVisita = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setCargando(true);
+
+    const proy = proyectos.find((p) => p.codigo === nuevaProyectoCodigo);
+
+    const { error } = await supabase.from('visitas').insert([
+      {
+        proyecto_codigo: proy?.codigo || nuevaProyectoCodigo || null,
+        proyecto_nombre: proy?.nombre || null,
+        proyecto_estado: proy?.estado || 'En Diseño',
+        categoria: nuevaCategoria,
+        responsable: nuevaResponsable,
+        titulo: nuevaTitulo.trim(),
+        fecha: nuevaFecha,
+        horario: nuevaHorario,
+        estado: nuevaEstado,
+        acta: nuevaActa.trim() || null,
+        alarma_activa: nuevaAlarmaActiva,
+        alarma_fecha: nuevaAlarmaActiva ? nuevaAlarmaFecha : null,
+        alarma_horario: nuevaAlarmaActiva ? nuevaAlarmaHorario : null,
+      },
+    ]);
+
+    setCargando(false);
+
+    if (!error) {
+      setModalNuevaVisita(false);
+      mostrarToast('Visita agendada correctamente');
+      router.refresh();
+    } else {
+      alert('Error al agendar visita: ' + error.message);
+    }
+  };
+
   // Abrir modal Editar Visita desde "Más info de la visita ->"
   const abrirEdicionVisita = (v: any) => {
     setVisitaResumen(null);
@@ -267,15 +336,21 @@ export default function AgendaClient({
   const eliminarVisita = async () => {
     if (!visitaEditando) return;
     setCargando(true);
-    const { error } = await supabase.from('visitas').delete().eq('id', visitaEditando.id);
-    setCargando(false);
-
-    if (!error) {
+    try {
+      await moverAPapelera({
+        tabla: 'visitas',
+        modulo: 'Visitas y Agenda',
+        titulo: visitaEditando.titulo || 'Visita sin título',
+        subtitulo: `${visitaEditando.fecha || ''} ${visitaEditando.horario || ''}`.trim(),
+        registro: visitaEditando,
+      });
       setVisitaEditando(null);
       mostrarToast('Visita enviada a papelera');
       router.refresh();
-    } else {
-      alert('Error al eliminar visita: ' + error.message);
+    } catch (error: any) {
+      alert('Error al mover visita a papelera: ' + error.message);
+    } finally {
+      setCargando(false);
     }
   };
 
@@ -300,16 +375,56 @@ export default function AgendaClient({
 
   return (
     <div className="min-h-screen bg-[#121212] text-white p-8 font-sans">
+      {/* ENCABEZADO PRINCIPAL + BOTONES DE CREACIÓN */}
+      <div className="flex flex-wrap justify-between items-start gap-4 mb-5">
+        <div>
+          <h1 className="text-3xl font-extrabold text-white tracking-tight">
+            Visitas y Agenda
+          </h1>
+          <p className="text-sm text-gray-400 mt-1">
+            Visitas de obra, reuniones con clientes, coordinación de proveedores y calendario unificado
+          </p>
+        </div>
+
+        <div className="flex items-center gap-3">
+          <button
+            type="button"
+            onClick={abrirModalNuevaVisita}
+            className="bg-[#EAB308] hover:bg-[#CA9A04] text-black px-5 py-2.5 rounded-xl font-bold text-sm flex items-center gap-2 transition-colors shadow-[0_0_20px_rgba(234,179,8,0.2)] cursor-pointer"
+          >
+            <Plus className="w-4 h-4 stroke-[2.5]" /> Agendar visita
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setModalNuevaTarea(true)}
+            className="bg-[#1A1A1A] hover:bg-gray-800 border border-gray-800 text-white px-4 py-2.5 rounded-xl font-bold text-sm flex items-center gap-2 transition-colors cursor-pointer"
+          >
+            <Plus className="w-4 h-4 stroke-[2.5]" /> Nueva tarea
+          </button>
+        </div>
+      </div>
+
       {/* ACCIONES SUPERIORES DERECHA */}
       <div className="flex justify-end items-center gap-2.5 mb-5">
-        <button className="bg-[#181818] hover:bg-gray-800 border border-gray-800 text-gray-300 hover:text-white px-3.5 py-2 rounded-xl text-xs font-medium flex items-center gap-2 cursor-pointer">
+        <button
+          type="button"
+          onClick={abrirModalNuevaVisita}
+          className="bg-[#181818] hover:bg-gray-800 border border-gray-800 text-gray-300 hover:text-white px-3.5 py-2 rounded-xl text-xs font-medium flex items-center gap-2 cursor-pointer"
+        >
           <Upload className="w-3.5 h-3.5" /> Importar
         </button>
-        <button className="bg-[#181818] hover:bg-gray-800 border border-gray-800 text-gray-300 hover:text-white px-3.5 py-2 rounded-xl text-xs font-medium flex items-center gap-2 cursor-pointer">
+        <button
+          type="button"
+          className="bg-[#181818] hover:bg-gray-800 border border-gray-800 text-gray-300 hover:text-white px-3.5 py-2 rounded-xl text-xs font-medium flex items-center gap-2 cursor-pointer"
+        >
           <Download className="w-3.5 h-3.5" /> Exportar
         </button>
         <div className="w-px h-5 bg-gray-800 mx-1" />
-        <button className="bg-[#181818] hover:bg-gray-800 border border-gray-800 text-gray-300 hover:text-white px-3.5 py-2 rounded-xl text-xs font-medium flex items-center gap-2 cursor-pointer">
+        <button
+          type="button"
+          className="bg-[#181818] hover:bg-gray-800 border border-gray-800 text-gray-300 hover:text-white px-3.5 py-2 rounded-xl text-xs font-medium flex items-center gap-2 cursor-pointer"
+        >
           <Lock className="w-3.5 h-3.5" /> Restringir vista
         </button>
       </div>
@@ -318,10 +433,10 @@ export default function AgendaClient({
       <div className="bg-[#1A1A1A] border border-gray-800 rounded-2xl p-6 shadow-xl">
         {/* Cabecera y botones funcionales */}
         <div className="flex flex-wrap justify-between items-center gap-4 pb-5 border-b border-gray-800/80 mb-5">
-          <h1 className="text-base font-bold text-white flex items-center gap-2.5">
+          <h2 className="text-base font-bold text-white flex items-center gap-2.5">
             <Calendar className="w-5 h-5 text-[#EAB308]" />
             Calendario y Agenda General
-          </h1>
+          </h2>
 
           <div className="flex flex-wrap items-center gap-3">
             {/* Filtro de tipo */}
@@ -581,6 +696,151 @@ export default function AgendaClient({
           </div>
         )}
       </div>
+
+      {/* MODAL: AGENDAR NUEVA VISITA */}
+      {modalNuevaVisita && (
+        <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4 backdrop-blur-sm">
+          <div className="bg-[#1A1A1A] border border-gray-800 rounded-2xl w-full max-w-2xl shadow-2xl overflow-hidden flex flex-col max-h-[92vh]">
+            <div className="px-6 pt-6 pb-4 flex justify-between items-start border-b border-gray-800/80">
+              <div>
+                <h2 className="text-lg font-bold text-white">Agendar Nueva Visita / Reunión</h2>
+                <p className="text-xs text-gray-400 mt-0.5">
+                  Inspección de obra, reunión con cliente o coordinación de gremios
+                </p>
+              </div>
+              <button onClick={() => setModalNuevaVisita(false)} className="text-gray-400 hover:text-white cursor-pointer">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <form onSubmit={crearNuevaVisita} className="px-6 py-5 overflow-y-auto space-y-4">
+              <div>
+                <label className="block text-xs font-semibold text-gray-300 mb-1.5">Corresponde al Proyecto / Obra</label>
+                <select
+                  value={nuevaProyectoCodigo}
+                  onChange={(e) => setNuevaProyectoCodigo(e.target.value)}
+                  className="w-full bg-[#121212] border border-gray-700/80 rounded-lg px-3 py-2.5 text-sm text-white"
+                >
+                  <option value="">General (Sin proyecto específico)</option>
+                  {proyectos.map((p) => (
+                    <option key={p.codigo} value={p.codigo}>
+                      {p.codigo} · {p.nombre}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-xs font-semibold text-gray-300 mb-1.5">Categoría</label>
+                  <select value={nuevaCategoria} onChange={(e) => setNuevaCategoria(e.target.value)} className="w-full bg-[#121212] border border-gray-700/80 rounded-lg px-3 py-2.5 text-sm text-white">
+                    {CATEGORIAS_VISITA.map((cat) => <option key={cat} value={cat}>{cat}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-gray-300 mb-1.5">Responsable / Participante</label>
+                  <select value={nuevaResponsable} onChange={(e) => setNuevaResponsable(e.target.value)} className="w-full bg-[#121212] border border-gray-700/80 rounded-lg px-3 py-2.5 text-sm text-white">
+                    {INTEGRANTES.map((i) => <option key={i} value={i}>{i}</option>)}
+                  </select>
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-gray-300 mb-1.5">Motivo / Título de Visita *</label>
+                <input
+                  type="text"
+                  required
+                  value={nuevaTitulo}
+                  onChange={(e) => setNuevaTitulo(e.target.value)}
+                  placeholder="Ej. Visita de obra - Replanteo"
+                  className="w-full bg-[#121212] border border-gray-700/80 rounded-lg px-3 py-2.5 text-sm text-white placeholder-gray-500"
+                />
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div>
+                  <label className="block text-xs font-semibold text-gray-300 mb-1.5">Fecha *</label>
+                  <input type="date" required value={nuevaFecha} onChange={(e) => setNuevaFecha(e.target.value)} className="w-full bg-[#121212] border border-gray-700/80 rounded-lg px-3 py-2.5 text-sm text-white [color-scheme:dark]" />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-gray-300 mb-1.5">Horario</label>
+                  <input type="time" value={nuevaHorario} onChange={(e) => setNuevaHorario(e.target.value)} className="w-full bg-[#121212] border border-gray-700/80 rounded-lg px-3 py-2.5 text-sm text-white [color-scheme:dark]" />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-gray-300 mb-1.5">Estado</label>
+                  <select value={nuevaEstado} onChange={(e) => setNuevaEstado(e.target.value)} className="w-full bg-[#121212] border border-gray-700/80 rounded-lg px-3 py-2.5 text-sm text-white">
+                    {ESTADOS_VISITA.map((est) => <option key={est} value={est}>{est}</option>)}
+                  </select>
+                </div>
+              </div>
+
+              <div className="bg-[#151515] border border-gray-800 rounded-xl p-4 space-y-3">
+                <label className="flex items-center justify-between cursor-pointer">
+                  <div className="flex items-center gap-2.5">
+                    <Bell className={`w-4 h-4 ${nuevaAlarmaActiva ? 'text-[#EAB308]' : 'text-gray-400'}`} />
+                    <div>
+                      <div className="text-xs font-bold text-white">Alarma / Recordatorio</div>
+                      <div className="text-[11px] text-gray-400">Seleccioná fecha y horario para recibir aviso</div>
+                    </div>
+                  </div>
+                  <input
+                    type="checkbox"
+                    checked={nuevaAlarmaActiva}
+                    onChange={(e) => setNuevaAlarmaActiva(e.target.checked)}
+                    className="w-4 h-4 accent-[#EAB308] cursor-pointer"
+                  />
+                </label>
+
+                {nuevaAlarmaActiva && (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-2 border-t border-gray-800/80">
+                    <div>
+                      <label className="block text-xs font-semibold text-gray-300 mb-1.5">Fecha de la alarma</label>
+                      <input type="date" required value={nuevaAlarmaFecha} onChange={(e) => setNuevaAlarmaFecha(e.target.value)} className="w-full bg-[#121212] border border-gray-700/80 rounded-lg px-3 py-2 text-sm text-white [color-scheme:dark]" />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-semibold text-gray-300 mb-1.5">Horario de la alarma</label>
+                      <input type="time" required value={nuevaAlarmaHorario} onChange={(e) => setNuevaAlarmaHorario(e.target.value)} className="w-full bg-[#121212] border border-gray-700/80 rounded-lg px-3 py-2 text-sm text-white [color-scheme:dark]" />
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-gray-300 mb-1.5">Notas / Temario previo</label>
+                <textarea rows={2} value={nuevaActa} onChange={(e) => setNuevaActa(e.target.value)} placeholder="Puntos a revisar en la visita..." className="w-full bg-[#121212] border border-gray-700/80 rounded-lg px-3 py-2.5 text-sm text-white placeholder-gray-500 resize-none" />
+              </div>
+
+              <div className="flex justify-end items-center gap-3 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setModalNuevaVisita(false)}
+                  className="text-gray-300 hover:text-white px-4 py-2 rounded-lg text-sm font-medium cursor-pointer"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="submit"
+                  disabled={cargando}
+                  className="bg-[#EAB308] hover:bg-[#CA9A04] text-black px-5 py-2.5 rounded-lg font-bold text-sm cursor-pointer disabled:opacity-50"
+                >
+                  {cargando ? 'Agendando...' : 'Agendar Visita'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL: NUEVA TAREA */}
+      <ModalTarea
+        abierto={modalNuevaTarea}
+        onClose={() => setModalNuevaTarea(false)}
+        onGuardado={(msg) => {
+          mostrarToast(msg);
+          router.refresh();
+        }}
+        proyectos={proyectos}
+      />
 
       {/* MODAL 1: RESUMEN DE LA VISITA */}
       {visitaResumen && (

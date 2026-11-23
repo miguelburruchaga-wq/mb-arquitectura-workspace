@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { supabase } from '@/lib/supabase';
+import { moverAPapelera } from '@/lib/papelera';
 import { extraerDatosFacturaPdf } from '@/lib/leerFacturaPdf';
 import {
   ShoppingCart,
@@ -332,13 +333,20 @@ export default function ModalCompraPedido({
   const eliminarCompra = async () => {
     if (!compraEditando) return;
     setCargando(true);
-    const { error } = await supabase.from('compras').delete().eq('id', compraEditando.id);
-    setCargando(false);
-    if (!error) {
+    try {
+      await moverAPapelera({
+        tabla: 'compras',
+        modulo: 'Compras y Pedidos',
+        titulo: compraEditando.concepto || 'Compra sin concepto',
+        subtitulo: `${compraEditando.proveedor || ''} · ${compraEditando.moneda || 'ARS'} ${compraEditando.importe || 0}`,
+        registro: compraEditando,
+      });
       onClose();
-      onGuardado('Compra eliminada');
-    } else {
-      alert('Error al eliminar: ' + error.message);
+      onGuardado('Compra enviada a papelera');
+    } catch (error: any) {
+      alert('Error al mover a papelera: ' + error.message);
+    } finally {
+      setCargando(false);
     }
   };
 
@@ -508,7 +516,7 @@ export default function ModalCompraPedido({
             </div>
           </div>
 
-          {/* COMPROBANTE ADJUNTO (FACTURA) - IGUAL A IMAGEN 3 */}
+          {/* COMPROBANTE ADJUNTO (FACTURA) */}
           <div className="bg-[#141414] border border-gray-800 rounded-xl p-4 space-y-3">
             <div>
               <div className="text-sm font-bold text-white flex items-center gap-1.5">
@@ -700,7 +708,7 @@ export default function ModalCompraPedido({
                   disabled={cargando}
                   className="text-red-500 hover:bg-red-500/15 px-3.5 py-2 rounded-lg text-xs font-semibold inline-flex items-center gap-1.5 cursor-pointer"
                 >
-                  <Trash2 className="w-4 h-4" /> Eliminar
+                  <Trash2 className="w-4 h-4" /> Enviar a papelera
                 </button>
               )}
             </div>

@@ -1,7 +1,9 @@
 "use client";
 
 import { useState, useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import { supabase } from '@/lib/supabase';
+import { moverAPapelera } from '@/lib/papelera';
 import { extraerDatosFacturaPdf } from '@/lib/leerFacturaPdf';
 import { X, Upload, FileText, RefreshCw, Loader2, Trash2 } from 'lucide-react';
 
@@ -46,6 +48,7 @@ export default function ModalMovimientoFinanciero({
   proyectoFijoCodigo?: string;
   monedaInicial?: 'USD' | 'ARS';
 }) {
+  const [montado, setMontado] = useState(false);
   const [cargando, setCargando] = useState(false);
   const [subiendoPdf, setSubiendoPdf] = useState(false);
   const [leyendoPdf, setLeyendoPdf] = useState(false);
@@ -72,6 +75,10 @@ export default function ModalMovimientoFinanciero({
   const [fechaConversion, setFechaConversion] = useState(() => new Date().toISOString().split('T')[0]);
   const [valorUsd, setValorUsd] = useState('');
   const [importeUsd, setImporteUsd] = useState('');
+
+  useEffect(() => {
+    setMontado(true);
+  }, []);
 
   const parsearNumero = (val: string) => {
     if (!val) return 0;
@@ -212,7 +219,7 @@ export default function ModalMovimientoFinanciero({
     }
   }, [abierto, movEditando, proyectoFijoCodigo, monedaInicial]);
 
-  if (!abierto) return null;
+  if (!abierto || !montado) return null;
 
   const cambiarTipoMovimiento = (nuevoTipo: 'Ingreso' | 'Egreso') => {
     setTipo(nuevoTipo);
@@ -367,21 +374,31 @@ export default function ModalMovimientoFinanciero({
   const eliminarMovimiento = async () => {
     if (!movEditando) return;
     setCargando(true);
-    const { error } = await supabase.from('movimientos').delete().eq('id', movEditando.id);
-    setCargando(false);
-
-    if (!error) {
+    try {
+      const val = Number(movEditando.importe ?? 0) || Number(movEditando.monto ?? 0);
+      const mon = (movEditando.moneda || moneda).toUpperCase();
+      await moverAPapelera({
+        tabla: 'movimientos',
+        modulo: 'Finanzas',
+        titulo: movEditando.concepto || 'Movimiento sin concepto',
+        subtitulo: `${movEditando.tipo || ''} · ${mon} $${val.toLocaleString('es-AR')} ${
+          movEditando.proyecto ? `· ${movEditando.proyecto}` : ''
+        }`.trim(),
+        registro: movEditando,
+      });
       onClose();
-      onGuardado('Movimiento eliminado');
-    } else {
-      alert('Error al eliminar movimiento: ' + error.message);
+      onGuardado('Movimiento enviado a papelera');
+    } catch (error: any) {
+      alert('Error al mover a papelera: ' + error.message);
+    } finally {
+      setCargando(false);
     }
   };
 
-  return (
-    <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4 backdrop-blur-sm">
+  return createPortal(
+    <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-[9999] p-4">
       <div className="bg-[#1A1A1A] rounded-2xl border border-gray-800 w-full max-w-2xl shadow-2xl overflow-hidden flex flex-col max-h-[92vh]">
-        <div className="px-6 pt-6 pb-4 flex justify-between items-start">
+        <div className="px-6 pt-6 pb-4 flex justify-between items-start border-b border-gray-800">
           <div>
             <h2 className="text-lg font-bold text-white">
               {movEditando ? 'Detalle del Movimiento Financiero' : 'Nuevo Movimiento Financiero'}
@@ -395,8 +412,7 @@ export default function ModalMovimientoFinanciero({
           </button>
         </div>
 
-        <form onSubmit={guardarMovimiento} className="px-6 pb-6 overflow-y-auto space-y-4">
-          {/* Toggle: + Ingreso / Honorario  |  - Egreso / Costo */}
+        <form onSubmit={guardarMovimiento} className="px-6 py-5 overflow-y-auto space-y-4">
           <div className="grid grid-cols-2 bg-[#121212] border border-gray-800 rounded-xl p-1 gap-1">
             <button
               type="button"
@@ -422,7 +438,6 @@ export default function ModalMovimientoFinanciero({
             </button>
           </div>
 
-          {/* Categoría + Nro. Factura / Recibo */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div>
               <label className="block text-xs font-semibold text-gray-300 mb-1.5">Categoría</label>
@@ -453,7 +468,6 @@ export default function ModalMovimientoFinanciero({
             </div>
           </div>
 
-          {/* Concepto / Detalle * */}
           <div>
             <label className="block text-xs font-semibold text-gray-300 mb-1.5">
               Concepto / Detalle *
@@ -468,7 +482,6 @@ export default function ModalMovimientoFinanciero({
             />
           </div>
 
-          {/* Moneda * + Importe * + Comprobante */}
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             <div>
               <label className="block text-xs font-semibold text-gray-300 mb-1.5">Moneda *</label>
@@ -522,7 +535,6 @@ export default function ModalMovimientoFinanciero({
             </div>
           </div>
 
-          {/* Archivo PDF del Comprobante + Forma de pago */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div>
               <label className="block text-xs font-semibold text-gray-300 mb-1.5">
@@ -588,7 +600,6 @@ export default function ModalMovimientoFinanciero({
             </div>
           </div>
 
-          {/* Más datos (opcional): conversión ARS a USD */}
           <div className="bg-[#141414] border border-gray-800 rounded-xl p-3.5 space-y-3">
             <button
               type="button"
@@ -666,7 +677,6 @@ export default function ModalMovimientoFinanciero({
             )}
           </div>
 
-          {/* Fecha * + Corresponde al Proyecto (Opcional) */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div>
               <label className="block text-xs font-semibold text-gray-300 mb-1.5">Fecha *</label>
@@ -690,9 +700,12 @@ export default function ModalMovimientoFinanciero({
               <select
                 value={proyectoCodigo}
                 onChange={(e) => seleccionarProyecto(e.target.value)}
-                className="w-full bg-[#121212] border border-gray-700/80 rounded-lg px-3 py-2.5 text-sm text-white"
+                disabled={Boolean(proyectoFijoCodigo)}
+                className="w-full bg-[#121212] border border-gray-700/80 rounded-lg px-3 py-2.5 text-sm text-white disabled:opacity-90"
               >
-                <option value="">General (Sin proyecto específico)</option>
+                {!proyectoFijoCodigo && (
+                  <option value="">General (Sin proyecto específico)</option>
+                )}
                 {proyectos.map((p) => (
                   <option key={p.codigo} value={p.codigo}>
                     {p.codigo} · {p.nombre} ({p.estado || 'En Diseño'})
@@ -702,7 +715,6 @@ export default function ModalMovimientoFinanciero({
             </div>
           </div>
 
-          {/* Cliente + Proveedor + Estado */}
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             <div>
               <label className="block text-xs font-semibold text-gray-300 mb-1.5">
@@ -758,7 +770,6 @@ export default function ModalMovimientoFinanciero({
             </div>
           </div>
 
-          {/* Notas */}
           <div>
             <label className="block text-xs font-semibold text-gray-300 mb-1.5">
               Notas / Observaciones
@@ -772,7 +783,6 @@ export default function ModalMovimientoFinanciero({
             />
           </div>
 
-          {/* Pie */}
           <div className="flex justify-between items-center pt-3 border-t border-gray-800/80">
             <div>
               {movEditando && (
@@ -782,7 +792,7 @@ export default function ModalMovimientoFinanciero({
                   disabled={cargando}
                   className="text-red-500 hover:bg-red-500/15 px-3.5 py-2 rounded-lg text-xs font-semibold inline-flex items-center gap-1.5 cursor-pointer"
                 >
-                  <Trash2 className="w-4 h-4" /> Eliminar
+                  <Trash2 className="w-4 h-4" /> Enviar a papelera
                 </button>
               )}
             </div>
@@ -810,6 +820,7 @@ export default function ModalMovimientoFinanciero({
           </div>
         </form>
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }
