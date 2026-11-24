@@ -1,7 +1,7 @@
 import { Suspense } from 'react';
 import { supabase } from '@/lib/supabase';
 import DashboardClient from '@/components/DashboardClient';
-
+export const dynamic = 'force-dynamic';
 async function ContenidoDashboard() {
   const [
     { data: proyectos },

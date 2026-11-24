@@ -1,7 +1,7 @@
 import { Suspense } from 'react';
 import { supabase } from '@/lib/supabase';
 import DocumentosClient from '@/components/DocumentosClient';
-
+export const dynamic = 'force-dynamic';
 async function ContenidoDocumentos() {
   const [{ data: documentos }, { data: proyectos }] = await Promise.all([
     supabase

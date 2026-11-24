@@ -1,7 +1,7 @@
 import { Suspense } from 'react';
 import { supabase } from '@/lib/supabase';
 import ComprasClient from '@/components/ComprasClient';
-
+export const dynamic = 'force-dynamic';
 async function ContenidoCompras() {
   const [{ data: compras }, { data: proyectos }, { data: proveedores }] = await Promise.all([
     supabase.from('compras').select('*').order('created_at', { ascending: false }),

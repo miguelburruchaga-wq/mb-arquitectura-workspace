@@ -6,7 +6,7 @@ import Link from 'next/link';
 import { supabase } from '@/lib/supabase';
 import BotonNuevoCliente from '@/components/BotonNuevoCliente';
 import { Search, Upload, Download, Lock, ArrowRight } from 'lucide-react';
-
+export const dynamic = 'force-dynamic';
 export default function PanelClientes() {
   const router = useRouter();
   const [clientes, setClientes] = useState<any[]>([]);

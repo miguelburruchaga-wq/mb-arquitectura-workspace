@@ -1,7 +1,7 @@
 import { Suspense } from 'react';
 import { supabase } from '@/lib/supabase';
 import ProveedoresClient from '@/components/ProveedoresClient';
-
+export const dynamic = 'force-dynamic';
 async function ListaProveedores() {
   const { data: proveedores } = await supabase
     .from('proveedores')

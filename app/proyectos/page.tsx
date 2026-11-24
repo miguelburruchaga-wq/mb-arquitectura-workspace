@@ -1,6 +1,6 @@
 import { supabase } from '@/lib/supabase';
 import ProyectosClient from '@/components/ProyectosClient';
-
+export const dynamic = 'force-dynamic';
 export const revalidate = 15;
 
 export default async function PaginaProyectos() {

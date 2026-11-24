@@ -1,7 +1,7 @@
 import { Suspense } from 'react';
 import { supabase } from '@/lib/supabase';
 import EquipoClient from '@/components/EquipoClient';
-
+export const dynamic = 'force-dynamic';
 async function ContenidoEquipo() {
   const [{ data: equipo }, { data: proyectos }, { data: tareas }] = await Promise.all([
     supabase.from('equipo').select('*').order('id', { ascending: true }),

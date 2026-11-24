@@ -1,6 +1,6 @@
 import { supabase } from '@/lib/supabase';
 import AgendaClient from '@/components/AgendaClient';
-
+export const dynamic = 'force-dynamic';
 export default async function PaginaAgenda() {
   const [{ data: visitas }, { data: proyectos }] = await Promise.all([
     supabase.from('visitas').select('*').order('fecha', { ascending: true }),

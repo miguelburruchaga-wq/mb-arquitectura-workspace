@@ -1,7 +1,7 @@
 import { Suspense } from 'react';
 import { supabase } from '@/lib/supabase';
 import FinanzasClient from '@/components/FinanzasClient';
-
+export const dynamic = 'force-dynamic';
 async function ContenidoFinanzas() {
   const [
     { data: movimientos },

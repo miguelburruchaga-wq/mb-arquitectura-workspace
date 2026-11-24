@@ -106,7 +106,7 @@ async function ContenidoFichaProyecto({ params }: { params: Promise<{ id: string
     />
   );
 }
-
+export const dynamic = 'force-dynamic';
 export default function FichaProyectoPage({
   params,
 }: {

@@ -5,7 +5,7 @@ import { createPortal } from 'react-dom';
 import { supabase } from '@/lib/supabase';
 import { ItemPapelera } from '@/lib/papelera';
 import { RotateCcw, Trash2, AlertTriangle, CheckCircle2, X } from 'lucide-react';
-
+export const dynamic = 'force-dynamic';
 export default function PapeleraPage() {
   const [items, setItems] = useState<ItemPapelera[]>([]);
   const [cargando, setCargando] = useState(true);
