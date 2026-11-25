@@ -37,7 +37,6 @@ import {
   Check,
   Tag,
   Camera,
-  ShieldAlert,
 } from 'lucide-react';
 
 const ETAPAS_PROYECTO = [
@@ -73,6 +72,9 @@ export default function FichaProyectoClient({
   const router = useRouter();
   const [montado, setMontado] = useState(false);
 
+  // Estado local del proyecto para reflejar cambios al instante
+  const [datosProyectoLocal, setDatosProyectoLocal] = useState<any>(proyecto);
+
   const [pestanaActiva, setPestanaActiva] = useState<
     'resumen' | 'tareas' | 'visitas' | 'documentos' | 'compras' | 'finanzas' | 'comentarios'
   >('resumen');
@@ -82,7 +84,7 @@ export default function FichaProyectoClient({
   );
   const [toast, setToast] = useState<string | null>(null);
 
-  // Estado Económico y Semáforo de Obra (ARS / USD + criterio seleccionable)
+  // Estado Económico y Semáforo de Obra
   const [monedaEconomico, setMonedaEconomico] = useState<'USD' | 'ARS'>('USD');
   const [criterioSemaforo, setCriterioSemaforo] = useState<
     'avance_vs_cobrado' | 'margen_neto' | 'plazos_tareas'
@@ -130,6 +132,7 @@ export default function FichaProyectoClient({
   const [modalVisita, setModalVisita] = useState(false);
   const [visitaEditando, setVisitaEditando] = useState<any | null>(null);
 
+  // Estados del Modal Editar Datos del Proyecto
   const [modalEditarProy, setModalEditarProy] = useState(false);
   const [editNombre, setEditNombre] = useState(proyecto.nombre || '');
   const [editTipologia, setEditTipologia] = useState(proyecto.tipologia || '');
@@ -138,12 +141,18 @@ export default function FichaProyectoClient({
     proyecto.cliente_id ? String(proyecto.cliente_id) : ''
   );
   const [editUbicacion, setEditUbicacion] = useState(proyecto.ubicacion || '');
-  const [editSuperficie, setEditSuperficie] = useState(proyecto.superficie || '');
+  const [editSuperficie, setEditSuperficie] = useState(
+    proyecto.superficie ? String(proyecto.superficie) : ''
+  );
   const [editPresupuesto, setEditPresupuesto] = useState(String(proyecto.presupuesto || ''));
   const [editFechaInicio, setEditFechaInicio] = useState(proyecto.fecha_inicio || '');
-  const [editFechaEntrega, setEditFechaEntrega] = useState(proyecto.fecha_entrega || '');
+  const [editFechaEntrega, setEditFechaEntrega] = useState(
+    proyecto.entrega_estimada || proyecto.fecha_entrega || ''
+  );
   const [editDriveUrl, setEditDriveUrl] = useState(proyecto.drive_url || '');
-  const [editDescripcion, setEditDescripcion] = useState(proyecto.descripcion || '');
+  const [editDescripcion, setEditDescripcion] = useState(
+    proyecto.notas || proyecto.descripcion || ''
+  );
   const [guardandoEdicion, setGuardandoEdicion] = useState(false);
 
   useEffect(() => {
@@ -151,10 +160,34 @@ export default function FichaProyectoClient({
   }, []);
 
   useEffect(() => {
+    setDatosProyectoLocal(proyecto);
+    setEstadoProyecto(proyecto.estado || 'En Diseño');
+    setEtapaActual(proyecto.etapa_actual || proyecto.etapa || 'Relevamiento y Concepto');
+  }, [proyecto]);
+
+  useEffect(() => {
     if (Array.isArray(proyecto.comentarios)) {
       setComentarios(proyecto.comentarios);
     }
   }, [proyecto.comentarios]);
+
+  const abrirModalEditarDatos = () => {
+    setEditNombre(datosProyectoLocal.nombre || '');
+    setEditTipologia(datosProyectoLocal.tipologia || '');
+    setEditResponsable(datosProyectoLocal.responsable || '');
+    setEditClienteId(datosProyectoLocal.cliente_id ? String(datosProyectoLocal.cliente_id) : '');
+    setEditUbicacion(datosProyectoLocal.ubicacion || '');
+    setEditSuperficie(datosProyectoLocal.superficie ? String(datosProyectoLocal.superficie) : '');
+    setEditPresupuesto(String(datosProyectoLocal.presupuesto || ''));
+    setEditFechaInicio(datosProyectoLocal.fecha_inicio || '');
+    setEditFechaEntrega(
+      datosProyectoLocal.entrega_estimada || datosProyectoLocal.fecha_entrega || ''
+    );
+    setEditDriveUrl(datosProyectoLocal.drive_url || '');
+    setEditDescripcion(datosProyectoLocal.notas || datosProyectoLocal.descripcion || '');
+    setGuardandoEdicion(false);
+    setModalEditarProy(true);
+  };
 
   const mostrarToast = (msg: string) => {
     setToast(msg);
@@ -162,8 +195,8 @@ export default function FichaProyectoClient({
   };
 
   const clienteAsociado = useMemo(() => {
-    return clientes.find((c) => String(c.id) === String(proyecto.cliente_id));
-  }, [clientes, proyecto.cliente_id]);
+    return clientes.find((c) => String(c.id) === String(datosProyectoLocal.cliente_id));
+  }, [clientes, datosProyectoLocal.cliente_id]);
 
   const formatearFechaCorta = (iso: string) => {
     if (!iso) return '—';
@@ -183,15 +216,15 @@ export default function FichaProyectoClient({
       await moverAPapelera({
         tabla: 'proyectos',
         modulo: 'Proyectos',
-        titulo: proyecto.nombre || 'Proyecto sin nombre',
-        subtitulo: `${proyecto.codigo || ''} ${
+        titulo: datosProyectoLocal.nombre || 'Proyecto sin nombre',
+        subtitulo: `${datosProyectoLocal.codigo || ''} ${
           clienteAsociado?.nombre
             ? `· ${clienteAsociado.nombre}`
-            : proyecto.cliente_nombre
-            ? `· ${proyecto.cliente_nombre}`
+            : datosProyectoLocal.cliente_nombre
+            ? `· ${datosProyectoLocal.cliente_nombre}`
             : ''
         }`.trim(),
-        registro: proyecto,
+        registro: datosProyectoLocal,
       });
       setConfirmarPapelera(false);
       router.push('/proyectos');
@@ -210,14 +243,25 @@ export default function FichaProyectoClient({
     await supabase
       .from('proyectos')
       .update({ etapa_actual: nuevaEtapa, etapa: nuevaEtapa, estado: nuevoEstado })
-      .eq('id', proyecto.id);
+      .eq('codigo', datosProyectoLocal.codigo);
+
+    setDatosProyectoLocal((prev: any) => ({
+      ...prev,
+      etapa: nuevaEtapa,
+      etapa_actual: nuevaEtapa,
+      estado: nuevoEstado,
+    }));
     mostrarToast(`Etapa actualizada: ${nuevaEtapa}`);
     router.refresh();
   };
 
   const cambiarEstadoProyecto = async (nuevoEstado: string) => {
     setEstadoProyecto(nuevoEstado);
-    await supabase.from('proyectos').update({ estado: nuevoEstado }).eq('id', proyecto.id);
+    await supabase
+      .from('proyectos')
+      .update({ estado: nuevoEstado })
+      .eq('codigo', datosProyectoLocal.codigo);
+    setDatosProyectoLocal((prev: any) => ({ ...prev, estado: nuevoEstado }));
     mostrarToast(`Estado actualizado a ${nuevoEstado}`);
     router.refresh();
   };
@@ -228,7 +272,11 @@ export default function FichaProyectoClient({
     const reader = new FileReader();
     reader.onload = async () => {
       const dataUrl = String(reader.result || '');
-      await supabase.from('proyectos').update({ portada_url: dataUrl }).eq('id', proyecto.id);
+      await supabase
+        .from('proyectos')
+        .update({ portada_url: dataUrl })
+        .eq('codigo', datosProyectoLocal.codigo);
+      setDatosProyectoLocal((prev: any) => ({ ...prev, portada_url: dataUrl }));
       mostrarToast('Portada actualizada');
       router.refresh();
     };
@@ -245,7 +293,7 @@ export default function FichaProyectoClient({
     await supabase
       .from('proyectos')
       .update({ equipo_asignado: actualizado })
-      .eq('id', proyecto.id);
+      .eq('codigo', datosProyectoLocal.codigo);
     mostrarToast(
       yaEsta
         ? `${nombreIntegrante} quitado del proyecto`
@@ -288,7 +336,7 @@ export default function FichaProyectoClient({
     const { error } = await supabase
       .from('proyectos')
       .update({ comentarios: listaActualizada })
-      .eq('id', proyecto.id);
+      .eq('codigo', datosProyectoLocal.codigo);
 
     setEnviandoComentario(false);
 
@@ -307,7 +355,7 @@ export default function FichaProyectoClient({
     const { error } = await supabase
       .from('proyectos')
       .update({ comentarios: listaActualizada })
-      .eq('id', proyecto.id);
+      .eq('codigo', datosProyectoLocal.codigo);
 
     if (!error) {
       setComentarios(listaActualizada);
@@ -320,34 +368,50 @@ export default function FichaProyectoClient({
 
   const guardarEdicionProyecto = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (guardandoEdicion) return;
     setGuardandoEdicion(true);
 
-    const presNum = parseFloat(String(editPresupuesto).replace(/\./g, '').replace(',', '.')) || 0;
+    try {
+      const presNum =
+        parseFloat(String(editPresupuesto).replace(/\./g, '').replace(',', '.')) || 0;
+      const supNum =
+        parseFloat(String(editSuperficie).replace(/[^0-9.,]/g, '').replace(',', '.')) || 0;
+      const clienteObj = clientes.find((c) => String(c.id) === String(editClienteId));
 
-    const { error } = await supabase
-      .from('proyectos')
-      .update({
+      const datos: Record<string, any> = {
         nombre: editNombre.trim(),
         tipologia: editTipologia.trim() || null,
         responsable: editResponsable.trim() || null,
-        cliente_id: editClienteId ? Number(editClienteId) : null,
+        cliente_id: editClienteId || null,
+        cliente_nombre: clienteObj ? clienteObj.nombre : null,
         ubicacion: editUbicacion.trim() || null,
-        superficie: editSuperficie.trim() || null,
+        superficie: supNum,
         presupuesto: presNum,
         fecha_inicio: editFechaInicio || null,
-        fecha_entrega: editFechaEntrega || null,
+        entrega_estimada: editFechaEntrega || null,
         drive_url: editDriveUrl.trim() || null,
-        descripcion: editDescripcion.trim() || null,
-      })
-      .eq('id', proyecto.id);
+        notas: editDescripcion.trim() || null,
+      };
 
-    setGuardandoEdicion(false);
-    if (!error) {
+      const consultaUpdate = datosProyectoLocal.id
+        ? supabase.from('proyectos').update(datos).eq('id', datosProyectoLocal.id)
+        : supabase.from('proyectos').update(datos).eq('codigo', datosProyectoLocal.codigo);
+
+      const { error } = await consultaUpdate;
+
+      if (error) {
+        alert('Error al guardar el proyecto: ' + error.message);
+        return;
+      }
+
+      setDatosProyectoLocal((prev: any) => ({ ...prev, ...datos }));
       setModalEditarProy(false);
-      mostrarToast('Datos del proyecto actualizados');
+      mostrarToast('Proyecto actualizado correctamente');
       router.refresh();
-    } else {
-      alert('Error al actualizar proyecto: ' + error.message);
+    } catch (err: any) {
+      alert('Error inesperado al guardar: ' + (err?.message || 'Sin respuesta de red'));
+    } finally {
+      setGuardandoEdicion(false);
     }
   };
 
@@ -392,7 +456,7 @@ export default function FichaProyectoClient({
     return e === 'abonado' || e === 'cobrado' || e === 'pagado' || e === 'finalizado';
   };
 
-  const presupuestoUsd = Number(proyecto.presupuesto || 0);
+  const presupuestoUsd = Number(datosProyectoLocal.presupuesto || 0);
 
   const ingresosCobradosUsd = useMemo(() => {
     return movimientos
@@ -406,7 +470,6 @@ export default function FichaProyectoClient({
       .reduce((acc, m) => acc + obtenerUsdEquivalente(m), 0);
   }, [movimientos]);
 
-  // Totales en ARS para el selector ARS | USD de Estado Económico
   const cotizacionPromedioProyecto = useMemo(() => {
     const conCot = movimientos.filter((m) => Number(m.valor_usd || 0) > 0);
     if (conCot.length === 0) return 1450;
@@ -415,9 +478,9 @@ export default function FichaProyectoClient({
   }, [movimientos]);
 
   const presupuestoArs = useMemo(() => {
-    if (String(proyecto.moneda || 'USD').toUpperCase() === 'ARS') return presupuestoUsd;
+    if (String(datosProyectoLocal.moneda || 'USD').toUpperCase() === 'ARS') return presupuestoUsd;
     return presupuestoUsd * cotizacionPromedioProyecto;
-  }, [proyecto.moneda, presupuestoUsd, cotizacionPromedioProyecto]);
+  }, [datosProyectoLocal.moneda, presupuestoUsd, cotizacionPromedioProyecto]);
 
   const ingresosCobradosArs = useMemo(() => {
     return movimientos
@@ -469,13 +532,13 @@ export default function FichaProyectoClient({
     return { atrasadas, porRealizar, enCurso, completadas };
   }, [tareas]);
 
-  // Cálculo del Semáforo de Obra según el criterio seleccionado
   const semaforoObra = useMemo(() => {
     const idxEtapa = Math.max(0, ETAPAS_PROYECTO.indexOf(etapaActual));
     const avanceEtapaPct = Math.round(((idxEtapa + 1) / ETAPAS_PROYECTO.length) * 100);
     const avanceTareasPct =
       tareas.length > 0 ? Math.round((statsTareas.completadas / tareas.length) * 100) : avanceEtapaPct;
-    const avanceObraPct = tareas.length > 0 ? Math.round((avanceEtapaPct + avanceTareasPct) / 2) : avanceEtapaPct;
+    const avanceObraPct =
+      tareas.length > 0 ? Math.round((avanceEtapaPct + avanceTareasPct) / 2) : avanceEtapaPct;
 
     const gastadoPct =
       presupuestoUsd > 0 ? Math.round((egresosProyectoUsd / presupuestoUsd) * 100) : 0;
@@ -514,7 +577,9 @@ export default function FichaProyectoClient({
           nivel: 'rojo',
           clase: 'bg-rose-950/75 border-rose-700/60 text-rose-300',
           dot: 'bg-rose-400',
-          titulo: `Desvío de Plazo · ${statsTareas.atrasadas} ${statsTareas.atrasadas === 1 ? 'tarea atrasada' : 'tareas atrasadas'}`,
+          titulo: `Desvío de Plazo · ${statsTareas.atrasadas} ${
+            statsTareas.atrasadas === 1 ? 'tarea atrasada' : 'tareas atrasadas'
+          }`,
           detalle: `Avance físico ${avanceObraPct}% · Cobrado ${porcentajeCobrado}%`,
         };
       }
@@ -536,7 +601,6 @@ export default function FichaProyectoClient({
       };
     }
 
-    // Criterio por defecto: avance_vs_cobrado
     if (egresosProyectoUsd > ingresosCobradosUsd && egresosProyectoUsd > 0) {
       return {
         nivel: 'rojo',
@@ -700,6 +764,12 @@ export default function FichaProyectoClient({
     </div>
   );
 
+  const nombreClienteMostrar =
+    clienteAsociado?.nombre || datosProyectoLocal.cliente_nombre || 'Sin cliente';
+  const fechaEntregaMostrar =
+    datosProyectoLocal.entrega_estimada || datosProyectoLocal.fecha_entrega || '';
+  const notasMostrar = datosProyectoLocal.notas || datosProyectoLocal.descripcion || '';
+
   return (
     <div className="min-h-screen text-white p-8 font-sans">
       {/* BARRA SUPERIOR */}
@@ -739,7 +809,7 @@ export default function FichaProyectoClient({
 
           <button
             type="button"
-            onClick={() => setModalEditarProy(true)}
+            onClick={abrirModalEditarDatos}
             className="bg-[#242424] hover:bg-white/10 border border-white/10 text-gray-200 px-3.5 py-2 rounded-xl text-xs font-semibold inline-flex items-center gap-1.5 cursor-pointer"
           >
             <Edit3 className="w-3.5 h-3.5 text-[#EAB308]" /> Editar proyecto
@@ -760,8 +830,8 @@ export default function FichaProyectoClient({
         <div
           className="h-44 bg-cover bg-center relative"
           style={{
-            backgroundImage: proyecto.portada_url
-              ? `url(${proyecto.portada_url})`
+            backgroundImage: datosProyectoLocal.portada_url
+              ? `url(${datosProyectoLocal.portada_url})`
               : 'linear-gradient(135deg, #27272a 0%, #18181b 100%)',
           }}
         >
@@ -777,14 +847,16 @@ export default function FichaProyectoClient({
             <div>
               <div className="flex flex-wrap items-center gap-2 mb-2">
                 <span className="bg-[#EAB308]/15 border border-[#EAB308]/40 text-[#EAB308] px-2.5 py-0.5 rounded-md text-xs font-extrabold">
-                  {proyecto.codigo}
+                  {datosProyectoLocal.codigo}
                 </span>
-                {proyecto.tipologia && (
-                  <span className="text-xs font-semibold text-gray-300">{proyecto.tipologia}</span>
+                {datosProyectoLocal.tipologia && (
+                  <span className="text-xs font-semibold text-gray-300">
+                    {datosProyectoLocal.tipologia}
+                  </span>
                 )}
-                {proyecto.responsable && (
+                {datosProyectoLocal.responsable && (
                   <span className="bg-[#181818] border border-white/10 text-gray-300 px-2.5 py-0.5 rounded-md text-xs">
-                    Responsable: <strong>{proyecto.responsable}</strong>
+                    Responsable: <strong>{datosProyectoLocal.responsable}</strong>
                   </span>
                 )}
                 <span className="bg-cyan-950/70 border border-cyan-700/50 text-cyan-300 px-2.5 py-0.5 rounded-md text-xs font-semibold">
@@ -792,37 +864,39 @@ export default function FichaProyectoClient({
                 </span>
               </div>
 
-              <h1 className="text-3xl font-extrabold text-white tracking-tight">{proyecto.nombre}</h1>
+              <h1 className="text-3xl font-extrabold text-white tracking-tight">
+                {datosProyectoLocal.nombre}
+              </h1>
 
               <div className="flex flex-wrap items-center gap-4 text-xs text-gray-300 mt-2">
                 <span className="inline-flex items-center gap-1.5">
                   <User className="w-3.5 h-3.5 text-[#EAB308]" />
-                  Cliente:{' '}
-                  <strong className="text-white">{clienteAsociado?.nombre || 'Sin cliente'}</strong>
+                  Cliente: <strong className="text-white">{nombreClienteMostrar}</strong>
                 </span>
 
-                {proyecto.ubicacion && (
+                {datosProyectoLocal.ubicacion && (
                   <a
                     href={
-                      /^https?:\/\//i.test(proyecto.ubicacion)
-                        ? proyecto.ubicacion
+                      /^https?:\/\//i.test(datosProyectoLocal.ubicacion)
+                        ? datosProyectoLocal.ubicacion
                         : `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(
-                            proyecto.ubicacion
+                            datosProyectoLocal.ubicacion
                           )}`
                     }
                     target="_blank"
                     rel="noopener noreferrer"
                     className="inline-flex items-center gap-1 text-gray-300 hover:text-[#EAB308] hover:underline"
                   >
-                    <MapPin className="w-3.5 h-3.5 text-[#EAB308]" /> {proyecto.ubicacion}
+                    <MapPin className="w-3.5 h-3.5 text-[#EAB308]" />{' '}
+                    {datosProyectoLocal.ubicacion}
                   </a>
                 )}
               </div>
             </div>
 
-            {proyecto.drive_url && (
+            {datosProyectoLocal.drive_url && (
               <a
-                href={proyecto.drive_url}
+                href={datosProyectoLocal.drive_url}
                 target="_blank"
                 rel="noopener noreferrer"
                 className="bg-blue-600/15 hover:bg-blue-600/25 border border-blue-500/40 text-blue-400 px-4 py-2.5 rounded-xl text-xs font-bold inline-flex items-center gap-2 transition-colors"
@@ -928,7 +1002,7 @@ export default function FichaProyectoClient({
                   </h2>
                   <button
                     type="button"
-                    onClick={() => setModalEditarProy(true)}
+                    onClick={abrirModalEditarDatos}
                     className="text-xs font-bold text-[#EAB308] hover:underline cursor-pointer"
                   >
                     Editar datos →
@@ -938,33 +1012,33 @@ export default function FichaProyectoClient({
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-3">
                   <div className="bg-[#181818] border border-white/10 rounded-xl p-3.5">
                     <div className="text-[11px] text-gray-400">Cliente</div>
-                    <div className="text-xs font-bold text-white mt-1">
-                      {clienteAsociado?.nombre || 'Sin cliente'}
-                    </div>
+                    <div className="text-xs font-bold text-white mt-1">{nombreClienteMostrar}</div>
                   </div>
                   <div className="bg-[#181818] border border-white/10 rounded-xl p-3.5">
                     <div className="text-[11px] text-gray-400">Tipología</div>
                     <div className="text-xs font-bold text-white mt-1">
-                      {proyecto.tipologia || '—'}
+                      {datosProyectoLocal.tipologia || '—'}
                     </div>
                   </div>
                   <div className="bg-[#181818] border border-white/10 rounded-xl p-3.5">
                     <div className="text-[11px] text-gray-400">Responsable</div>
                     <div className="text-xs font-bold text-white mt-1">
-                      {proyecto.responsable || 'Sin asignar'}
+                      {datosProyectoLocal.responsable || 'Sin asignar'}
                     </div>
                   </div>
                   <div className="bg-[#181818] border border-white/10 rounded-xl p-3.5">
                     <div className="text-[11px] text-gray-400">Superficie</div>
                     <div className="text-xs font-bold text-white mt-1">
-                      {proyecto.superficie || '—'}
+                      {Number(datosProyectoLocal.superficie || 0) > 0
+                        ? `${datosProyectoLocal.superficie} m²`
+                        : datosProyectoLocal.superficie || '—'}
                     </div>
                   </div>
                   <div className="bg-[#181818] border border-white/10 rounded-xl p-3.5">
                     <div className="text-[11px] text-gray-400">Inicio / Entrega</div>
                     <div className="text-xs font-bold text-white mt-1">
-                      {formatearFechaCorta(proyecto.fecha_inicio)} →{' '}
-                      {formatearFechaCorta(proyecto.fecha_entrega)}
+                      {formatearFechaCorta(datosProyectoLocal.fecha_inicio)} →{' '}
+                      {formatearFechaCorta(fechaEntregaMostrar)}
                     </div>
                   </div>
                   <div className="bg-[#181818] border border-white/10 rounded-xl p-3.5">
@@ -981,7 +1055,7 @@ export default function FichaProyectoClient({
                   Descripción y Notas del Proyecto:
                 </div>
                 <div className="text-xs text-gray-200">
-                  {proyecto.descripcion || 'Sin notas adicionales cargadas en la ficha.'}
+                  {notasMostrar || 'Sin notas adicionales cargadas en la ficha.'}
                 </div>
               </div>
             </div>
@@ -1062,24 +1136,36 @@ export default function FichaProyectoClient({
                     <div className="text-[11px] text-gray-400">Cobrado</div>
                     <div className="text-base font-extrabold text-emerald-400 mt-1">
                       {monedaEconomico === 'USD'
-                        ? `USD $${ingresosCobradosUsd.toLocaleString('es-AR', { maximumFractionDigits: 2 })}`
-                        : `ARS $${ingresosCobradosArs.toLocaleString('es-AR', { maximumFractionDigits: 0 })}`}
+                        ? `USD $${ingresosCobradosUsd.toLocaleString('es-AR', {
+                            maximumFractionDigits: 2,
+                          })}`
+                        : `ARS $${ingresosCobradosArs.toLocaleString('es-AR', {
+                            maximumFractionDigits: 0,
+                          })}`}
                     </div>
                   </div>
                   <div className="bg-[#181818] border border-white/10 rounded-xl p-3.5">
                     <div className="text-[11px] text-gray-400">Saldo por cobrar</div>
                     <div className="text-base font-extrabold text-[#EAB308] mt-1">
                       {monedaEconomico === 'USD'
-                        ? `USD $${pendienteCobroUsd.toLocaleString('es-AR', { maximumFractionDigits: 2 })}`
-                        : `ARS $${pendienteCobroArs.toLocaleString('es-AR', { maximumFractionDigits: 0 })}`}
+                        ? `USD $${pendienteCobroUsd.toLocaleString('es-AR', {
+                            maximumFractionDigits: 2,
+                          })}`
+                        : `ARS $${pendienteCobroArs.toLocaleString('es-AR', {
+                            maximumFractionDigits: 0,
+                          })}`}
                     </div>
                   </div>
                   <div className="bg-[#181818] border border-white/10 rounded-xl p-3.5">
                     <div className="text-[11px] text-gray-400">Gastos / Compras</div>
                     <div className="text-base font-extrabold text-rose-500 mt-1">
                       {monedaEconomico === 'USD'
-                        ? `USD $${egresosProyectoUsd.toLocaleString('es-AR', { maximumFractionDigits: 2 })}`
-                        : `ARS $${egresosProyectoArs.toLocaleString('es-AR', { maximumFractionDigits: 0 })}`}
+                        ? `USD $${egresosProyectoUsd.toLocaleString('es-AR', {
+                            maximumFractionDigits: 2,
+                          })}`
+                        : `ARS $${egresosProyectoArs.toLocaleString('es-AR', {
+                            maximumFractionDigits: 0,
+                          })}`}
                     </div>
                   </div>
                 </div>
@@ -1436,7 +1522,7 @@ export default function FichaProyectoClient({
               <div className="space-y-2.5">
                 {equipo.map((miembro) => {
                   const asignado = equipoAsignado.includes(miembro.nombre);
-                  const esResponsablePrincipal = proyecto.responsable === miembro.nombre;
+                  const esResponsablePrincipal = datosProyectoLocal.responsable === miembro.nombre;
                   const iniciales = miembro.nombre
                     .replace(/^Arq\.\s*/i, '')
                     .split(' ')
@@ -1641,7 +1727,7 @@ export default function FichaProyectoClient({
             movimientos={movimientosNormalizadosUsd}
             moneda="USD"
             presupuestoTotal={presupuestoUsd}
-            titulo={`Curva S de Inversión · ${proyecto.codigo} (USD)`}
+            titulo={`Curva S de Inversión · ${datosProyectoLocal.codigo} (USD)`}
             subtitulo="Evolución acumulada contra el presupuesto pactado, cobros recibidos y gastos ejecutados"
           />
 
@@ -1774,7 +1860,7 @@ export default function FichaProyectoClient({
                 Compras y Facturas del Proyecto ({compras.length})
               </h2>
               <p className="text-xs text-gray-400 mt-0.5">
-                Pedidos vinculados a {proyecto.codigo} · {proyecto.nombre}
+                Pedidos vinculados a {datosProyectoLocal.codigo} · {datosProyectoLocal.nombre}
               </p>
             </div>
             <button
@@ -1872,14 +1958,14 @@ export default function FichaProyectoClient({
         </div>
       )}
 
-      {/* PESTAÑA: TAREAS (REUTILIZA TareasClient CON LISTA | KANBAN | CRONOGRAMA) */}
+      {/* PESTAÑA: TAREAS */}
       {pestanaActiva === 'tareas' && (
         <div className="bg-[#242424] border border-white/10 rounded-2xl p-6 shadow-xl">
           <TareasClient
             tareasIniciales={tareas}
-            proyectos={[proyecto]}
+            proyectos={[datosProyectoLocal]}
             equipo={equipo}
-            proyectoFijoCodigo={proyecto.codigo}
+            proyectoFijoCodigo={datosProyectoLocal.codigo}
             compacto={true}
           />
         </div>
@@ -1946,7 +2032,6 @@ export default function FichaProyectoClient({
             )}
           </div>
 
-          {/* GALERÍA CRONOLÓGICA DE BITÁCORA FOTOGRÁFICA */}
           <div className="bg-[#242424] border border-white/10 rounded-2xl p-6 shadow-xl">
             <div className="flex flex-wrap justify-between items-center gap-3 mb-4">
               <div>
@@ -2038,7 +2123,7 @@ export default function FichaProyectoClient({
                 Documentos y Planos ({documentos.length})
               </h2>
               <p className="text-xs text-gray-400 mt-0.5">
-                Láminas, moodboards, renders y enlaces Drive vinculados a {proyecto.nombre}
+                Láminas, moodboards, renders y enlaces Drive vinculados a {datosProyectoLocal.nombre}
               </p>
             </div>
 
@@ -2217,12 +2302,14 @@ export default function FichaProyectoClient({
                     </select>
                   </div>
                   <div>
-                    <label className="block text-xs font-semibold text-gray-300 mb-1">Superficie</label>
+                    <label className="block text-xs font-semibold text-gray-300 mb-1">
+                      Superficie (m²)
+                    </label>
                     <input
                       type="text"
                       value={editSuperficie}
                       onChange={(e) => setEditSuperficie(e.target.value)}
-                      placeholder="Ej. 450 m²"
+                      placeholder="Ej. 450"
                       className="w-full bg-[#121212] border border-gray-800 rounded-lg px-3 py-2 text-xs text-white"
                     />
                   </div>
@@ -2308,7 +2395,7 @@ export default function FichaProyectoClient({
                   <button
                     type="submit"
                     disabled={guardandoEdicion}
-                    className="bg-[#EAB308] hover:bg-[#CA9A04] text-black px-5 py-2 rounded-lg text-xs font-bold cursor-pointer"
+                    className="bg-[#EAB308] hover:bg-[#CA9A04] text-black px-5 py-2 rounded-lg text-xs font-bold cursor-pointer disabled:opacity-50"
                   >
                     {guardandoEdicion ? 'Guardando...' : 'Guardar Cambios'}
                   </button>
@@ -2338,7 +2425,10 @@ export default function FichaProyectoClient({
                 <div className="flex-1">
                   <h3 className="text-sm font-bold text-white">Enviar proyecto a papelera</h3>
                   <p className="text-xs text-gray-400 mt-1 leading-relaxed">
-                    ¿Querés mover <strong className="text-white">{proyecto.nombre}</strong> ({proyecto.codigo}) a la papelera? Podrás restaurarlo luego si lo necesitás.
+                    ¿Querés mover{' '}
+                    <strong className="text-white">{datosProyectoLocal.nombre}</strong> (
+                    {datosProyectoLocal.codigo}) a la papelera? Podrás restaurarlo luego si lo
+                    necesitás.
                   </p>
                 </div>
               </div>
@@ -2378,7 +2468,7 @@ export default function FichaProyectoClient({
       <ReporteClienteModal
         abierto={modalReporteCliente}
         onClose={() => setModalReporteCliente(false)}
-        proyecto={proyecto}
+        proyecto={datosProyectoLocal}
         cliente={clienteAsociado}
         etapaActual={etapaActual}
         etapasLista={ETAPAS_PROYECTO}
@@ -2402,9 +2492,9 @@ export default function FichaProyectoClient({
           router.refresh();
         }}
         visitaEditando={visitaEditando}
-        proyectos={[proyecto]}
+        proyectos={[datosProyectoLocal]}
         equipo={equipo}
-        proyectoFijoCodigo={proyecto.codigo}
+        proyectoFijoCodigo={datosProyectoLocal.codigo}
       />
 
       <ModalDocumento
@@ -2418,8 +2508,8 @@ export default function FichaProyectoClient({
           router.refresh();
         }}
         docEditando={docEditando}
-        proyectos={[proyecto]}
-        proyectoFijoCodigo={proyecto.codigo}
+        proyectos={[datosProyectoLocal]}
+        proyectoFijoCodigo={datosProyectoLocal.codigo}
       />
 
       <ModalTarea
@@ -2433,9 +2523,9 @@ export default function FichaProyectoClient({
           router.refresh();
         }}
         tareaEditando={tareaEditando}
-        proyectos={[proyecto]}
+        proyectos={[datosProyectoLocal]}
         equipo={equipo}
-        proyectoFijoCodigo={proyecto.codigo}
+        proyectoFijoCodigo={datosProyectoLocal.codigo}
       />
 
       <ModalCompraPedido
@@ -2449,9 +2539,9 @@ export default function FichaProyectoClient({
           router.refresh();
         }}
         compraEditando={compraEditando}
-        proyectos={[proyecto]}
+        proyectos={[datosProyectoLocal]}
         proveedores={proveedores}
-        proyectoFijoCodigo={proyecto.codigo}
+        proyectoFijoCodigo={datosProyectoLocal.codigo}
       />
 
       <ModalMovimientoFinanciero
@@ -2465,10 +2555,10 @@ export default function FichaProyectoClient({
           router.refresh();
         }}
         movEditando={movEditando}
-        proyectos={[proyecto]}
+        proyectos={[datosProyectoLocal]}
         clientes={clientes}
         proveedores={proveedores}
-        proyectoFijoCodigo={proyecto.codigo}
+        proyectoFijoCodigo={datosProyectoLocal.codigo}
         monedaInicial="ARS"
       />
 
