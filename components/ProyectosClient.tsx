@@ -242,7 +242,7 @@ export default function FichaProyectoClient({
     await supabase
       .from('proyectos')
       .update({ etapa_actual: nuevaEtapa, etapa: nuevaEtapa, estado: nuevoEstado })
-      .eq('id', datosProyectoLocal.id);
+      .eq('codigo', datosProyectoLocal.codigo);
 
     setDatosProyectoLocal((prev: any) => ({
       ...prev,
@@ -259,7 +259,7 @@ export default function FichaProyectoClient({
     await supabase
       .from('proyectos')
       .update({ estado: nuevoEstado })
-      .eq('id', datosProyectoLocal.id);
+      .eq('codigo', datosProyectoLocal.codigo);
     setDatosProyectoLocal((prev: any) => ({ ...prev, estado: nuevoEstado }));
     mostrarToast(`Estado actualizado a ${nuevoEstado}`);
     router.refresh();
@@ -274,7 +274,7 @@ export default function FichaProyectoClient({
       await supabase
         .from('proyectos')
         .update({ portada_url: dataUrl })
-        .eq('id', datosProyectoLocal.id);
+        .eq('codigo', datosProyectoLocal.codigo);
       setDatosProyectoLocal((prev: any) => ({ ...prev, portada_url: dataUrl }));
       mostrarToast('Portada actualizada');
       router.refresh();
@@ -292,7 +292,7 @@ export default function FichaProyectoClient({
     await supabase
       .from('proyectos')
       .update({ equipo_asignado: actualizado })
-      .eq('id', datosProyectoLocal.id);
+      .eq('codigo', datosProyectoLocal.codigo);
     mostrarToast(
       yaEsta
         ? `${nombreIntegrante} quitado del proyecto`
@@ -335,7 +335,7 @@ export default function FichaProyectoClient({
     const { error } = await supabase
       .from('proyectos')
       .update({ comentarios: listaActualizada })
-      .eq('id', datosProyectoLocal.id);
+      .eq('codigo', datosProyectoLocal.codigo);
 
     setEnviandoComentario(false);
 
@@ -354,7 +354,7 @@ export default function FichaProyectoClient({
     const { error } = await supabase
       .from('proyectos')
       .update({ comentarios: listaActualizada })
-      .eq('id', datosProyectoLocal.id);
+      .eq('codigo', datosProyectoLocal.codigo);
 
     if (!error) {
       setComentarios(listaActualizada);
@@ -375,11 +375,11 @@ export default function FichaProyectoClient({
       parseFloat(String(editSuperficie).replace(/[^0-9.,]/g, '').replace(',', '.')) || 0;
     const clienteObj = clientes.find((c) => String(c.id) === String(editClienteId));
 
-    const payloadActualizacion = {
+    const payloadActualizacion: Record<string, any> = {
       nombre: editNombre.trim(),
       tipologia: editTipologia.trim() || null,
       responsable: editResponsable.trim() || null,
-      cliente_id: editClienteId || null,
+      cliente_id: editClienteId ? editClienteId : null,
       cliente_nombre: clienteObj ? clienteObj.nombre : null,
       ubicacion: editUbicacion.trim() || null,
       superficie: supNum,
@@ -393,24 +393,27 @@ export default function FichaProyectoClient({
     const { data, error } = await supabase
       .from('proyectos')
       .update(payloadActualizacion)
-      .eq('id', datosProyectoLocal.id)
-      .select()
-      .single();
+      .eq('codigo', datosProyectoLocal.codigo)
+      .select();
 
     setGuardandoEdicion(false);
 
-    if (!error) {
-      if (data) {
-        setDatosProyectoLocal(data);
-      } else {
-        setDatosProyectoLocal((prev: any) => ({ ...prev, ...payloadActualizacion }));
-      }
-      setModalEditarProy(false);
-      mostrarToast('Datos del proyecto actualizados');
-      router.refresh();
-    } else {
-      alert('Error al actualizar proyecto: ' + error.message);
+    if (error) {
+      alert('Error de Supabase al guardar: ' + error.message);
+      return;
     }
+
+    if (!data || data.length === 0) {
+      alert(
+        'Supabase no modificó ninguna fila (revisá políticas RLS UPDATE en la tabla proyectos).'
+      );
+      return;
+    }
+
+    setDatosProyectoLocal(data[0]);
+    setModalEditarProy(false);
+    mostrarToast('Datos del proyecto guardados correctamente');
+    router.refresh();
   };
 
   const toggleCompletarTarea = async (tarea: any) => {
