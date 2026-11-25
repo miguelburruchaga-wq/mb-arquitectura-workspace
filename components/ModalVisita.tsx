@@ -4,7 +4,7 @@ import { useState, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { supabase } from '@/lib/supabase';
 import { moverAPapelera } from '@/lib/papelera';
-import { X, Bell, Trash2, Camera, Loader2 } from 'lucide-react';
+import { X, Bell, Trash2, Upload, Loader2, Link2 } from 'lucide-react';
 
 export const CATEGORIAS_VISITA = [
   'Visita de obra',
@@ -32,7 +32,6 @@ const INTEGRANTES_DEFAULT = [
   'Equipo MB',
 ];
 
-// Comprime cualquier foto de celular/cámara a máx 1400px y JPEG 80% antes de subirla
 async function comprimirImagenWeb(file: File): Promise<Blob> {
   return new Promise((resolve) => {
     const img = new Image();
@@ -115,6 +114,8 @@ export default function ModalVisita({
   // Bitácora fotográfica
   const [fotos, setFotos] = useState<FotoVisita[]>([]);
   const [etiquetaDefecto, setEtiquetaDefecto] = useState<'Antes' | 'En Obra' | 'Final de Obra'>('En Obra');
+  const [enlaceFotoExterna, setEnlaceFotoExterna] = useState('');
+  const [nombreFotoExterna, setNombreFotoExterna] = useState('');
 
   useEffect(() => {
     setMontado(true);
@@ -142,6 +143,8 @@ export default function ModalVisita({
       setAlarmaFecha(visitaEditando.alarma_fecha || visitaEditando.fecha || hoy);
       setAlarmaHorario(visitaEditando.alarma_horario || '09:00');
       setFotos(Array.isArray(visitaEditando.fotos) ? visitaEditando.fotos : []);
+      setEnlaceFotoExterna('');
+      setNombreFotoExterna('');
     } else {
       setProyectoCodigo(proyectoFijoCodigo || proyectos[0]?.codigo || '');
       setCategoria('Visita de obra');
@@ -155,6 +158,8 @@ export default function ModalVisita({
       setAlarmaFecha(hoy);
       setAlarmaHorario('09:00');
       setFotos([]);
+      setEnlaceFotoExterna('');
+      setNombreFotoExterna('');
     }
   }, [abierto, visitaEditando, proyectoFijoCodigo]);
 
@@ -191,7 +196,6 @@ export default function ModalVisita({
             nombre: file.name,
           });
         } else {
-          // Respaldo DataURL si el bucket aún no tiene permisos
           const reader = new FileReader();
           const dataUrl: string = await new Promise((res) => {
             reader.onload = () => res(String(reader.result || ''));
@@ -216,6 +220,22 @@ export default function ModalVisita({
     e.target.value = '';
   };
 
+  const agregarEnlaceFoto = () => {
+    const urlLimpia = enlaceFotoExterna.trim();
+    if (!urlLimpia) return;
+    setFotos((prev) => [
+      ...prev,
+      {
+        id: `${Date.now()}-${Math.random()}`,
+        url: urlLimpia,
+        etiqueta: etiquetaDefecto,
+        nombre: nombreFotoExterna.trim() || 'Álbum externo',
+      },
+    ]);
+    setEnlaceFotoExterna('');
+    setNombreFotoExterna('');
+  };
+
   const cambiarEtiquetaFoto = (id: string, nuevaEtiqueta: 'Antes' | 'En Obra' | 'Final de Obra') => {
     setFotos((prev) =>
       prev.map((f) => (f.id === id ? { ...f, etiqueta: nuevaEtiqueta } : f))
@@ -232,6 +252,16 @@ export default function ModalVisita({
 
     const proy = proyectos.find((p) => p.codigo === proyectoCodigo);
 
+    const fotosFinales = [...fotos];
+    if (enlaceFotoExterna.trim()) {
+      fotosFinales.push({
+        id: `${Date.now()}-${Math.random()}`,
+        url: enlaceFotoExterna.trim(),
+        etiqueta: etiquetaDefecto,
+        nombre: nombreFotoExterna.trim() || 'Álbum externo',
+      });
+    }
+
     const datos = {
       proyecto_codigo: proy?.codigo || proyectoCodigo || null,
       proyecto_nombre: proy?.nombre || visitaEditando?.proyecto_nombre || null,
@@ -246,7 +276,7 @@ export default function ModalVisita({
       alarma_activa: alarmaActiva,
       alarma_fecha: alarmaActiva ? alarmaFecha : null,
       alarma_horario: alarmaActiva ? alarmaHorario : null,
-      fotos,
+      fotos: fotosFinales,
     };
 
     const { error } = visitaEditando
@@ -416,59 +446,65 @@ export default function ModalVisita({
             </div>
           </div>
 
-          {/* REGISTRO FOTOGRÁFICO DE OBRA (ANTES / EN OBRA / FINAL DE OBRA) */}
-          <div className="bg-[#151515] border border-gray-800 rounded-xl p-4 space-y-3">
-            <div className="flex flex-wrap justify-between items-center gap-2">
-              <div className="flex items-center gap-2">
-                <Camera className="w-4 h-4 text-[#EAB308]" />
-                <div>
-                  <div className="text-xs font-bold text-white">
-                    Bitácora Fotográfica de Obra ({fotos.length})
-                  </div>
-                  <div className="text-[11px] text-gray-400">
-                    Se optimizan automáticamente antes de guardar en Supabase (bucket visitas)
-                  </div>
+          {/* REGISTRO FOTOGRÁFICO DE OBRA (ESTILO RECUADRO PUNTEADO IGUAL A COMPRAS) */}
+          <div className="bg-[#141414] border border-gray-800 rounded-xl p-4 space-y-3">
+            <div className="flex flex-wrap justify-between items-start gap-2">
+              <div>
+                <div className="text-sm font-bold text-white flex items-center gap-1.5">
+                  📷 Bitácora Fotográfica de Obra ({fotos.length})
                 </div>
+                <p className="text-xs text-gray-400 mt-1">
+                  Subí fotos desde tu dispositivo o pegá abajo un enlace externo (Google Drive, Dropbox, Nube).
+                </p>
               </div>
 
               <div className="flex items-center gap-2">
+                <span className="text-[11px] text-gray-400">Etiqueta:</span>
                 <select
                   value={etiquetaDefecto}
                   onChange={(e) => setEtiquetaDefecto(e.target.value as any)}
-                  className="bg-[#121212] border border-gray-700 rounded-lg px-2.5 py-1.5 text-xs font-semibold text-gray-200"
-                  title="Etiqueta para las próximas fotos que subas"
+                  className="bg-[#121212] border border-gray-700 rounded-lg px-2.5 py-1.5 text-xs font-bold text-white cursor-pointer"
                 >
                   {ETIQUETAS_FOTO.map((et) => (
                     <option key={et} value={et}>
-                      Etiqueta: {et}
+                      {et}
                     </option>
                   ))}
                 </select>
-
-                <label className="bg-[#EAB308]/15 hover:bg-[#EAB308]/25 border border-[#EAB308]/50 text-[#EAB308] px-3 py-1.5 rounded-lg text-xs font-bold inline-flex items-center gap-1.5 cursor-pointer">
-                  {subiendoFotos ? (
-                    <>
-                      <Loader2 className="w-3.5 h-3.5 animate-spin" /> Optimizando...
-                    </>
-                  ) : (
-                    <>
-                      <Camera className="w-3.5 h-3.5" /> + Agregar fotos
-                    </>
-                  )}
-                  <input
-                    type="file"
-                    accept="image/*"
-                    multiple
-                    disabled={subiendoFotos}
-                    onChange={manejarSubidaFotos}
-                    className="hidden"
-                  />
-                </label>
               </div>
             </div>
 
+            <label className="border border-dashed border-gray-700 hover:border-[#EAB308] bg-[#121212] rounded-xl p-5 flex flex-col items-center justify-center text-center cursor-pointer transition-colors">
+              {subiendoFotos ? (
+                <div className="flex items-center gap-2 text-xs text-[#EAB308] font-bold">
+                  <Loader2 className="w-5 h-5 animate-spin" />
+                  <span>Optimizando y subiendo fotos a Supabase...</span>
+                </div>
+              ) : (
+                <>
+                  <Upload className="w-5 h-5 text-[#EAB308] mb-2" />
+                  <div className="text-sm font-bold text-[#EAB308]">
+                    {fotos.length > 0
+                      ? `${fotos.length} ${fotos.length === 1 ? 'foto adjunta' : 'fotos adjuntas'} · Hacé clic para sumar más`
+                      : 'Hacé clic aquí para adjuntar fotos de obra (JPG, PNG, WEBP)'}
+                  </div>
+                  <div className="text-xs text-gray-400 mt-1 max-w-md">
+                    Las fotos se optimizan solas. Para álbumes pesados, pegá el enlace de Google Drive abajo.
+                  </div>
+                </>
+              )}
+              <input
+                type="file"
+                accept="image/*"
+                multiple
+                disabled={subiendoFotos}
+                onChange={manejarSubidaFotos}
+                className="hidden"
+              />
+            </label>
+
             {fotos.length > 0 && (
-              <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 pt-2">
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 pt-1">
                 {fotos.map((f) => (
                   <div
                     key={f.id}
@@ -483,7 +519,7 @@ export default function ModalVisita({
                       <button
                         type="button"
                         onClick={() => quitarFoto(f.id)}
-                        className="absolute top-1.5 right-1.5 p-1 rounded-lg bg-black/75 hover:bg-rose-600 text-white cursor-pointer"
+                        className="absolute top-1.5 right-1.5 p-1 rounded-lg bg-black/80 hover:bg-rose-600 text-white cursor-pointer"
                         title="Eliminar foto"
                       >
                         <X className="w-3.5 h-3.5" />
@@ -512,6 +548,40 @@ export default function ModalVisita({
                 ))}
               </div>
             )}
+
+            <div className="space-y-2 pt-1">
+              <div className="text-xs text-gray-300 font-medium flex items-center gap-1.5">
+                <Link2 className="w-3.5 h-3.5 text-[#EAB308]" />
+                O pegar enlace externo (Google Drive, Dropbox, OneDrive):
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
+                <input
+                  type="text"
+                  value={enlaceFotoExterna}
+                  onChange={(e) => setEnlaceFotoExterna(e.target.value)}
+                  placeholder="https://drive.google.com/..."
+                  className="md:col-span-2 bg-[#121212] border border-gray-800 rounded-lg px-3 py-2 text-xs text-white placeholder-gray-500"
+                />
+                <div className="flex gap-1.5">
+                  <input
+                    type="text"
+                    value={nombreFotoExterna}
+                    onChange={(e) => setNombreFotoExterna(e.target.value)}
+                    placeholder="Nombre visible"
+                    className="w-full bg-[#121212] border border-gray-800 rounded-lg px-3 py-2 text-xs text-white placeholder-gray-500"
+                  />
+                  {enlaceFotoExterna.trim() && (
+                    <button
+                      type="button"
+                      onClick={agregarEnlaceFoto}
+                      className="px-3 py-2 rounded-lg bg-[#EAB308] text-black text-xs font-extrabold cursor-pointer flex-shrink-0"
+                    >
+                      +
+                    </button>
+                  )}
+                </div>
+              </div>
+            </div>
           </div>
 
           {/* Alarma / Recordatorio */}

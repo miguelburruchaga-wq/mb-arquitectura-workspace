@@ -1,10 +1,11 @@
 "use client";
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
 import { supabase } from '@/lib/supabase';
 import ModalAjustesEstudio from '@/components/ModalAjustesEstudio';
 import { usePreferencias } from '@/components/PreferenciasProvider';
+import { useAuth } from '@/components/AuthGate';
 import { Search, Sun, Moon, AlarmClock, Bell, HelpCircle } from 'lucide-react';
 
 interface UsuarioConectado {
@@ -18,74 +19,99 @@ interface UsuarioConectado {
 export default function Topbar() {
   const router = useRouter();
   const { modoPantalla, setModoPantalla, tr } = usePreferencias();
+  const { usuario } = useAuth();
+
   const [busqueda, setBusqueda] = useState('');
   const [recordatorios, setRecordatorios] = useState(true);
   const [modalAjustes, setModalAjustes] = useState(false);
 
-  const [usuarioActual, setUsuarioActual] = useState<UsuarioConectado>({
-    id: 'titular-af',
-    nombre: 'Alejandro Fego',
-    rol: 'Titular del Estudio',
-    email: '',
-    foto_url: null,
-  });
-  const [conectados, setConectados] = useState<UsuarioConectado[]>([]);
+  const [directorioEquipo, setDirectorioEquipo] = useState<UsuarioConectado[]>([]);
+  const [conectadosRaw, setConectadosRaw] = useState<UsuarioConectado[]>([]);
 
   const obtenerIniciales = (nom: string) => {
     const limpio = String(nom || 'AF')
-      .replace(/^Arq\.\s*|^Dis\.\s*|^Ing\.\s*/i, '')
+      .replace(/^(?:Arq|Dis|Ing|Sr|Sra)\.?\s+/i, '')
       .trim();
-    const partes = limpio.split(/\s+/);
+    const partes = limpio.split(/\s+/).filter(Boolean);
     if (partes.length >= 2) return (partes[0][0] + partes[1][0]).toUpperCase();
     return limpio.slice(0, 2).toUpperCase() || 'AF';
   };
 
+  // Cargar fotos y datos actualizados directamente desde la tabla equipo
+  useEffect(() => {
+    let activo = true;
+
+    const cargarDirectorio = async () => {
+      const { data } = await supabase
+        .from('equipo')
+        .select('id, nombre, rol, email, foto_url');
+      if (activo && Array.isArray(data)) {
+        setDirectorioEquipo(
+          data.map((m: any) => ({
+            id: String(m.id),
+            nombre: m.nombre || '',
+            rol: m.rol || 'Integrante del Estudio',
+            email: String(m.email || '').trim().toLowerCase(),
+            foto_url: m.foto_url || null,
+          }))
+        );
+      }
+    };
+
+    cargarDirectorio();
+    window.addEventListener('mb_equipo_updated', cargarDirectorio);
+    return () => {
+      activo = false;
+      window.removeEventListener('mb_equipo_updated', cargarDirectorio);
+    };
+  }, []);
+
+  // Perfil actual sincronizado con AuthGate + tabla equipo
+  const usuarioActual: UsuarioConectado = useMemo(() => {
+    const emailSesion = String(usuario?.email || '').trim().toLowerCase();
+    const nombreSesion = usuario?.nombre || 'Alejandro Fego';
+
+    const enEquipo = directorioEquipo.find(
+      (m) =>
+        (emailSesion && m.email === emailSesion) ||
+        m.nombre.toLowerCase() === nombreSesion.toLowerCase()
+    );
+
+    return {
+      id: enEquipo?.id || String(usuario?.id || 'titular-af'),
+      nombre: enEquipo?.nombre || nombreSesion,
+      rol: enEquipo?.rol || usuario?.rol || 'Titular del Estudio',
+      email: enEquipo?.email || emailSesion,
+      foto_url: enEquipo?.foto_url || usuario?.foto_url || null,
+    };
+  }, [usuario, directorioEquipo]);
+
+  // Canal de presencia en tiempo real (envía payload liviano sin base64)
   useEffect(() => {
     let canal: ReturnType<typeof supabase.channel> | null = null;
     let activo = true;
 
     const iniciarPresencia = async () => {
-      // 1. Identificar al usuario logueado en Supabase Auth o en tabla equipo
       const { data: authData } = await supabase.auth.getUser();
-      const emailAuth = authData?.user?.email || '';
+      const emailAuth = String(
+        usuarioActual.email || authData?.user?.email || ''
+      )
+        .trim()
+        .toLowerCase();
 
-      let perfil: UsuarioConectado = {
-        id: authData?.user?.id || 'titular-af',
-        nombre: 'Alejandro Fego',
-        rol: 'Titular del Estudio',
+      const payloadPresencia = {
+        id: usuarioActual.id,
+        nombre: usuarioActual.nombre,
+        rol: usuarioActual.rol,
         email: emailAuth,
-        foto_url: null,
       };
 
-      if (emailAuth) {
-        const { data: miembro } = await supabase
-          .from('equipo')
-          .select('id, nombre, rol, email, foto_url')
-          .ilike('email', emailAuth)
-          .limit(1)
-          .maybeSingle();
-
-        if (miembro) {
-          perfil = {
-            id: String(miembro.id),
-            nombre: miembro.nombre,
-            rol: miembro.rol || 'Integrante del Estudio',
-            email: miembro.email || emailAuth,
-            foto_url: miembro.foto_url || null,
-          };
-        } else if (authData?.user?.user_metadata?.full_name) {
-          perfil.nombre = authData.user.user_metadata.full_name;
-        }
-      }
-
       if (!activo) return;
-      setUsuarioActual(perfil);
 
-      // 2. Canal de presencia en tiempo real
       canal = supabase.channel('mb-estudio-online', {
         config: {
           presence: {
-            key: perfil.email || perfil.id,
+            key: emailAuth || payloadPresencia.id,
           },
         },
       });
@@ -98,18 +124,18 @@ export default function Topbar() {
 
           Object.values(estado).forEach((presencias) => {
             presencias.forEach((p) => {
-              const clave = p.email || p.id || p.nombre;
+              const clave = String(p.email || p.id || p.nombre).toLowerCase();
               if (clave && !mapa.has(clave)) {
                 mapa.set(clave, p);
               }
             });
           });
 
-          setConectados(Array.from(mapa.values()));
+          setConectadosRaw(Array.from(mapa.values()));
         })
         .subscribe(async (status) => {
           if (status === 'SUBSCRIBED' && canal) {
-            await canal.track(perfil);
+            await canal.track(payloadPresencia);
           }
         });
     };
@@ -122,7 +148,7 @@ export default function Topbar() {
         supabase.removeChannel(canal);
       }
     };
-  }, []);
+  }, [usuarioActual.id, usuarioActual.nombre, usuarioActual.rol, usuarioActual.email]);
 
   const manejarBusqueda = (e: React.FormEvent) => {
     e.preventDefault();
@@ -131,12 +157,34 @@ export default function Topbar() {
     router.push(`/proyectos?q=${encodeURIComponent(q)}`);
   };
 
-  // Filtramos al usuario propio para mostrar el resto al lado de AF
-  const otrosConectados = conectados.filter(
-    (u) =>
-      (u.email && u.email !== usuarioActual.email) ||
-      (!u.email && u.nombre !== usuarioActual.nombre)
-  );
+  // Enriquecer cada conectado con su foto real desde directorioEquipo y excluir al usuario propio
+  const otrosConectados = useMemo(() => {
+    const emailPropio = usuarioActual.email.toLowerCase();
+    const nombrePropio = usuarioActual.nombre.toLowerCase();
+
+    return conectadosRaw
+      .filter((u) => {
+        const em = String(u.email || '').trim().toLowerCase();
+        const nom = String(u.nombre || '').trim().toLowerCase();
+        if (emailPropio && em && em === emailPropio) return false;
+        if (!em && nom === nombrePropio) return false;
+        if (u.id && u.id === usuarioActual.id) return false;
+        return true;
+      })
+      .map((u) => {
+        const em = String(u.email || '').trim().toLowerCase();
+        const nom = String(u.nombre || '').trim().toLowerCase();
+        const ficha = directorioEquipo.find(
+          (m) => (em && m.email === em) || (nom && m.nombre.toLowerCase() === nom)
+        );
+        return {
+          ...u,
+          nombre: ficha?.nombre || u.nombre,
+          rol: ficha?.rol || u.rol,
+          foto_url: ficha?.foto_url || u.foto_url || null,
+        };
+      });
+  }, [conectadosRaw, directorioEquipo, usuarioActual]);
 
   return (
     <>
@@ -221,10 +269,8 @@ export default function Topbar() {
                     <span>{obtenerIniciales(u.nombre)}</span>
                   )}
 
-                  {/* Punto verde de conectado */}
                   <span className="absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 rounded-full bg-emerald-400 ring-2 ring-[#2A2825]" />
 
-                  {/* Tooltip al pasar el cursor */}
                   <div className="pointer-events-none opacity-0 group-hover:opacity-100 transition-opacity absolute top-11 right-0 bg-[#161616] border border-white/15 rounded-xl px-3 py-1.5 shadow-2xl whitespace-nowrap z-50">
                     <div className="text-xs font-bold text-white flex items-center gap-1.5">
                       <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
@@ -237,7 +283,7 @@ export default function Topbar() {
             </div>
           )}
 
-          {/* BOTÓN AF (USUARIO ACTUAL) -> ABRE AJUSTES DEL ESTUDIO */}
+          {/* USUARIO ACTUAL -> ABRE AJUSTES DEL ESTUDIO */}
           <button
             type="button"
             onClick={() => setModalAjustes(true)}
