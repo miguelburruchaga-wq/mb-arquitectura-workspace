@@ -73,15 +73,14 @@ export async function extraerDatosFacturaPdf(file: File): Promise<{
   fechaDetectada: string | null;
   conceptoSugerido: string | null;
   monedaDetectada: 'ARS' | 'USD' | null;
+  textoCompleto: string;
 }> {
   try {
     const buffer = await file.arrayBuffer();
     const textoPdfInterno = await extraerTextoConPdfJs(buffer);
     const nombreArchivo = file.name.replace(/\.pdf$/i, '');
 
-    // =========================================================================
-    // 1. DETECTAR FECHA DE EMISIÓN
-    // =========================================================================
+    // 1. FECHA DE EMISIÓN
     let fechaDetectada: string | null = null;
 
     const matchFechaTexto = textoPdfInterno.match(
@@ -158,9 +157,7 @@ export async function extraerDatosFacturaPdf(file: File): Promise<{
       }
     }
 
-    // =========================================================================
-    // 2. DETECTAR NRO. DE FACTURA / ORDEN
-    // =========================================================================
+    // 2. NRO. DE FACTURA / ORDEN
     let nroFactura: string | null = null;
 
     const matchAfip = textoPdfInterno.match(
@@ -189,52 +186,59 @@ export async function extraerDatosFacturaPdf(file: File): Promise<{
       if (matchNombreOc) nroFactura = matchNombreOc[1];
     }
 
-    // =========================================================================
-    // 3. DETECTAR IMPORTE TOTAL NETO (tolerando números sin puntos de miles)
-    // =========================================================================
+    // 3. IMPORTE SUBTOTAL / NETO GRAVADO
     let montoDetectado = 0;
 
-    // Extraer todos los montos decimales del documento en orden de aparición
-    const regexMontos = /\$?\s*(\d{1,3}(?:[.,]\d{3})*[.,]\d{2}|\d+[.,]\d{2})/g;
-    const todosMontos: number[] = [];
-    let m: RegExpExecArray | null;
-    while ((m = regexMontos.exec(textoPdfInterno)) !== null) {
-      const val = parsearMontoFlexible(m[1]);
-      if (val > 0) todosMontos.push(val);
+    // A) Buscar explícitamente "Subtotal $ 691,239.78" o "Neto Gravado: $ ..."
+    const regexEtiquetaNeto =
+      /(?:Importe\s+Neto\s+Gravado|Neto\s+Gravado|Total\s+Neto|Subtotal(?:\s+Neto)?)[:\s]*\$?\s*(\d{1,3}(?:[.,]\d{3})*[.,]\d{2}|\d+[.,]\d{2})/gi;
+    const candidatosEtiqueta: number[] = [];
+    let mNeto: RegExpExecArray | null;
+    while ((mNeto = regexEtiquetaNeto.exec(textoPdfInterno)) !== null) {
+      const val = parsearMontoFlexible(mNeto[1]);
+      if (val > 0) candidatosEtiqueta.push(val);
     }
 
-    const tieneDiscriminacionIva = /\b(?:subtotal|neto\s+gravado|total\s+neto|i\.?v\.?a\.?)\b/i.test(
-      textoPdfInterno
-    );
+    if (candidatosEtiqueta.length > 0) {
+      montoDetectado = Math.max(...candidatosEtiqueta);
+    }
 
-    if (todosMontos.length > 0) {
-      // Tomar los últimos 10 montos del PDF (donde siempre está el bloque de totales del pie)
-      const montosPie = todosMontos.slice(-10);
+    // B) Respaldo analizando los montos de la mitad inferior del documento
+    if (montoDetectado === 0) {
+      const zonaInferior = textoPdfInterno.slice(Math.floor(textoPdfInterno.length * 0.35));
+      const regexMontos = /\$?\s*(\d{1,3}(?:[.,]\d{3})*[.,]\d{2}|\d+[.,]\d{2})/g;
+      const todosMontos: number[] = [];
+      let m: RegExpExecArray | null;
+      while ((m = regexMontos.exec(zonaInferior)) !== null) {
+        const val = parsearMontoFlexible(m[1]);
+        if (val > 0) todosMontos.push(val);
+      }
 
-      if (tieneDiscriminacionIva && montosPie.length >= 2) {
-        // Si un monto aparece repetido 2+ veces en el pie (ej. Electro Star: 2131533.92 en ambos Subtotales), es el Neto
+      const tieneDiscriminacionIva = /\b(?:subtotal|neto\s+gravado|total\s+neto|i\.?v\.?a\.?)\b/i.test(
+        textoPdfInterno
+      );
+
+      if (todosMontos.length > 0) {
         const conteo = new Map<number, number>();
-        for (const v of montosPie) {
+        for (const v of todosMontos) {
           conteo.set(v, (conteo.get(v) || 0) + 1);
         }
         const repetidos = [...conteo.entries()]
           .filter(([, cant]) => cant >= 2)
           .sort((a, b) => b[0] - a[0]);
 
-        const unicosDesc = [...new Set(montosPie)].sort((a, b) => b - a);
+        const unicosDesc = [...new Set(todosMontos)].sort((a, b) => b - a);
         const totalConIva = unicosDesc[0];
 
-        if (repetidos.length > 0 && repetidos[0][0] < totalConIva) {
-          montoDetectado = repetidos[0][0];
-        } else if (unicosDesc.length >= 2) {
-          // El 1° mayor es Total Final con IVA; el 2° mayor es el Subtotal Neto
-          montoDetectado = unicosDesc[1];
+        if (tieneDiscriminacionIva && unicosDesc.length >= 2) {
+          if (repetidos.length > 0 && repetidos[0][0] < totalConIva) {
+            montoDetectado = repetidos[0][0];
+          } else {
+            montoDetectado = unicosDesc[1];
+          }
         } else {
           montoDetectado = totalConIva;
         }
-      } else {
-        // Sin discriminación de IVA (ej. Factura C): el mayor monto del pie es el Total
-        montoDetectado = Math.max(...montosPie);
       }
     }
 
@@ -257,6 +261,7 @@ export async function extraerDatosFacturaPdf(file: File): Promise<{
       fechaDetectada,
       conceptoSugerido: nombreLimpio.length > 2 ? nombreLimpio : null,
       monedaDetectada,
+      textoCompleto: textoPdfInterno,
     };
   } catch {
     return {
@@ -265,6 +270,7 @@ export async function extraerDatosFacturaPdf(file: File): Promise<{
       fechaDetectada: null,
       conceptoSugerido: null,
       monedaDetectada: null,
+      textoCompleto: '',
     };
   }
 }

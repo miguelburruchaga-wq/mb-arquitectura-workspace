@@ -3,6 +3,7 @@
 import { useState, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
 import ModalDocumento, { CATEGORIAS_DOCUMENTOS } from '@/components/ModalDocumento';
+import VisorArchivoModal from '@/components/VisorArchivoModal';
 import {
   Plus,
   Search,
@@ -33,6 +34,7 @@ export default function DocumentosClient({
 
   const [modalAbierto, setModalAbierto] = useState(false);
   const [docEditando, setDocEditando] = useState<any | null>(null);
+  const [visorArchivo, setVisorArchivo] = useState<{ url: string; titulo: string } | null>(null);
   const [toast, setToast] = useState<string | null>(null);
 
   const mostrarToast = (msg: string) => {
@@ -45,20 +47,6 @@ export default function DocumentosClient({
     const [y, m, d] = String(iso).split('T')[0].split('-');
     if (!y || !m || !d) return iso;
     return `${d}/${m}/${y}`;
-  };
-
-  const abrirArchivo = (url: string) => {
-    if (!url) return;
-    if (url.startsWith('data:')) {
-      const win = window.open();
-      if (win) {
-        win.document.write(
-          `<iframe src="${url}" frameborder="0" style="border:0;width:100%;height:100vh;" allowfullscreen></iframe>`
-        );
-      }
-    } else {
-      window.open(url, '_blank', 'noopener,noreferrer');
-    }
   };
 
   const documentosFiltrados = useMemo(() => {
@@ -330,7 +318,12 @@ export default function DocumentosClient({
                               type="button"
                               onClick={(e) => {
                                 e.stopPropagation();
-                                abrirArchivo(d.archivo_url);
+                                setVisorArchivo({
+                                  url: d.archivo_url,
+                                  titulo: d.codigo_lamina
+                                    ? `${d.codigo_lamina} · ${d.titulo}`
+                                    : d.titulo,
+                                });
                               }}
                               className="px-2.5 py-1.5 rounded-lg bg-blue-500/15 border border-blue-500/40 text-blue-400 hover:bg-blue-500/25 text-xs font-semibold inline-flex items-center gap-1 cursor-pointer"
                             >
@@ -369,6 +362,14 @@ export default function DocumentosClient({
           </div>
         )}
       </div>
+
+      {/* VISOR MODAL INTEGRADO */}
+      <VisorArchivoModal
+        abierto={Boolean(visorArchivo)}
+        url={visorArchivo?.url || ''}
+        titulo={visorArchivo?.titulo}
+        onClose={() => setVisorArchivo(null)}
+      />
 
       {/* MODAL COMPARTIDO */}
       <ModalDocumento

@@ -5,11 +5,25 @@ import { createContext, useContext, useEffect, useState } from 'react';
 export type Idioma = 'ES' | 'EN' | 'PT';
 export type ModoPantalla = 'claro' | 'oscuro';
 export type TamanoLetra = 'estandar' | 'grande';
-export type Paleta = 'clasica' | 'pastel' | 'madera';
+export type Paleta =
+  | 'claridad'
+  | 'volt'
+  | 'esmeralda'
+  | 'borgona'
+  | 'hormigon'
+  | 'azulplano';
+
+const PALETAS_VALIDAS: Paleta[] = [
+  'claridad',
+  'volt',
+  'esmeralda',
+  'borgona',
+  'hormigon',
+  'azulplano',
+];
 
 const DICCIONARIO: Record<Idioma, Record<string, string>> = {
   ES: {
-    // Sidebar y Topbar
     dashboard: 'Dashboard',
     clientes: 'Clientes',
     proyectos: 'Proyectos',
@@ -31,8 +45,6 @@ const DICCIONARIO: Record<Idioma, Record<string, string>> = {
     titular: 'Titular',
     notificaciones: 'Notificaciones',
     instructivo: 'Instructivo',
-
-    // Dashboard
     panelControl: 'Panel de Control',
     personalizar: 'Personalizar',
     ocultar: 'Ocultar',
@@ -82,7 +94,6 @@ const DICCIONARIO: Record<Idioma, Record<string, string>> = {
     appCreadaPor: 'App creada por',
   },
   EN: {
-    // Sidebar y Topbar
     dashboard: 'Dashboard',
     clientes: 'Clients',
     proyectos: 'Projects',
@@ -104,8 +115,6 @@ const DICCIONARIO: Record<Idioma, Record<string, string>> = {
     titular: 'Owner',
     notificaciones: 'Notifications',
     instructivo: 'Guide',
-
-    // Dashboard
     panelControl: 'Dashboard',
     personalizar: 'Customize',
     ocultar: 'Hide',
@@ -155,7 +164,6 @@ const DICCIONARIO: Record<Idioma, Record<string, string>> = {
     appCreadaPor: 'App created by',
   },
   PT: {
-    // Sidebar y Topbar
     dashboard: 'Painel',
     clientes: 'Clientes',
     proyectos: 'Projetos',
@@ -177,8 +185,6 @@ const DICCIONARIO: Record<Idioma, Record<string, string>> = {
     titular: 'Titular',
     notificaciones: 'Notificações',
     instructivo: 'Guia',
-
-    // Dashboard
     panelControl: 'Painel de Controle',
     personalizar: 'Personalizar',
     ocultar: 'Ocultar',
@@ -247,7 +253,7 @@ export function PreferenciasProvider({ children }: { children: React.ReactNode }
   const [idioma, setIdiomaState] = useState<Idioma>('ES');
   const [modoPantalla, setModoPantallaState] = useState<ModoPantalla>('oscuro');
   const [tamanoLetra, setTamanoLetraState] = useState<TamanoLetra>('estandar');
-  const [paleta, setPaletaState] = useState<Paleta>('clasica');
+  const [paleta, setPaletaState] = useState<Paleta>('claridad');
 
   const aplicarAlDom = (m: ModoPantalla, f: TamanoLetra, p: Paleta) => {
     const html = document.documentElement;
@@ -263,8 +269,7 @@ export function PreferenciasProvider({ children }: { children: React.ReactNode }
         const parsed = JSON.parse(raw);
         const m: ModoPantalla = parsed.modoPantalla === 'claro' ? 'claro' : 'oscuro';
         const f: TamanoLetra = parsed.tamanoLetra === 'grande' ? 'grande' : 'estandar';
-        const p: Paleta =
-          parsed.paleta === 'pastel' || parsed.paleta === 'madera' ? parsed.paleta : 'clasica';
+        const p: Paleta = PALETAS_VALIDAS.includes(parsed.paleta) ? parsed.paleta : 'claridad';
         const l: Idioma = parsed.idioma === 'EN' || parsed.idioma === 'PT' ? parsed.idioma : 'ES';
 
         setModoPantallaState(m);
@@ -273,10 +278,10 @@ export function PreferenciasProvider({ children }: { children: React.ReactNode }
         setIdiomaState(l);
         aplicarAlDom(m, f, p);
       } else {
-        aplicarAlDom('oscuro', 'estandar', 'clasica');
+        aplicarAlDom('oscuro', 'estandar', 'claridad');
       }
     } catch {
-      aplicarAlDom('oscuro', 'estandar', 'clasica');
+      aplicarAlDom('oscuro', 'estandar', 'claridad');
     }
   }, []);
 
@@ -340,7 +345,7 @@ export function usePreferencias() {
       idioma: 'ES' as Idioma,
       modoPantalla: 'oscuro' as ModoPantalla,
       tamanoLetra: 'estandar' as TamanoLetra,
-      paleta: 'clasica' as Paleta,
+      paleta: 'claridad' as Paleta,
       tr: (k: string) => DICCIONARIO.ES[k] || k,
       setIdioma: () => {},
       setModoPantalla: () => {},

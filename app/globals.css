@@ -1,8 +1,14 @@
 @import "tailwindcss";
 
 :root {
-  --accent: #EAB308;
-  --accent-hover: #CA9A04;
+  --accent: #FFD100;
+  --accent-hover: #E6BC00;
+  --accent-fg: #111827;
+  --sidebar-bg: #202020;
+  --sidebar-footer: #181818;
+  --surface-tint: rgba(255, 209, 0, 0.08);
+  --bg-light: #E8E9EC;
+  --bg-dark: #121212;
 }
 
 /* 1. Tamaño de letra ampliado */
@@ -10,122 +16,392 @@ html[data-font="grande"] {
   font-size: 18px;
 }
 
-/* 2. Paletas de colores (selectores directos sin escaneo de substring) */
-html[data-paleta="pastel"] {
-  --accent: #D86B8A;
-  --accent-hover: #C05574;
+/* =========================================================================
+   2. DEFINICIÓN DE LAS 6 PALETAS DEL SISTEMA
+   ========================================================================= */
+
+html[data-paleta="claridad"],
+html[data-paleta="clasica"] {
+  --accent: #FFD100;
+  --accent-hover: #E5BC00;
+  --accent-fg: #111827;
+  --sidebar-bg: #202020;
+  --sidebar-footer: #181818;
+  --surface-tint: rgba(255, 209, 0, 0.12);
+  --bg-light: #E6E7EA;
+  --bg-dark: #121212;
 }
 
-html[data-paleta="madera"] {
-  --accent: #B4723C;
-  --accent-hover: #965B2B;
+html[data-paleta="volt"] {
+  --accent: #D5FF40;
+  --accent-hover: #C2EC2B;
+  --accent-fg: #141513;
+  --sidebar-bg: #141513;
+  --sidebar-footer: #0E0F0D;
+  --surface-tint: rgba(213, 255, 64, 0.14);
+  --bg-light: #EFF1EC;
+  --bg-dark: #111210;
 }
 
-html[data-paleta="pastel"] .bg-\[\#EAB308\],
-html[data-paleta="madera"] .bg-\[\#EAB308\] {
+html[data-paleta="esmeralda"] {
+  --accent: #EBAE29;
+  --accent-hover: #D4991B;
+  --accent-fg: #132228;
+  --sidebar-bg: #132228;
+  --sidebar-footer: #0D181D;
+  --surface-tint: rgba(88, 156, 128, 0.16);
+  --bg-light: #F3EFE2;
+  --bg-dark: #0F1A1F;
+}
+
+html[data-paleta="borgona"] {
+  --accent: #DC586D;
+  --accent-hover: #C4465A;
+  --accent-fg: #FFFFFF;
+  --sidebar-bg: #4C1D3D;
+  --sidebar-footer: #3B152F;
+  --surface-tint: rgba(220, 88, 109, 0.15);
+  --bg-light: #FBECE6;
+  --bg-dark: #1C0D17;
+}
+html[data-theme="claro"][data-paleta="borgona"] {
+  --accent: #A33757;
+  --accent-hover: #8B2B48;
+  --accent-fg: #FFFFFF;
+}
+
+html[data-paleta="hormigon"] {
+  --accent: #C86D44;
+  --accent-hover: #B25B35;
+  --accent-fg: #FFFFFF;
+  --sidebar-bg: #1F2124;
+  --sidebar-footer: #17191B;
+  --surface-tint: rgba(200, 109, 68, 0.14);
+  --bg-light: #EFECE7;
+  --bg-dark: #141517;
+}
+
+html[data-paleta="azulplano"] {
+  --accent: #D96B43;
+  --accent-hover: #C25832;
+  --accent-fg: #FFFFFF;
+  --sidebar-bg: #16202C;
+  --sidebar-footer: #0F1720;
+  --surface-tint: rgba(217, 107, 67, 0.14);
+  --bg-light: #EDF1F6;
+  --bg-dark: #0F151D;
+}
+
+/* =========================================================================
+   3. APLICACIÓN DE ACENTOS Y SIDEBAR EN AMBOS MODOS
+   ========================================================================= */
+
+html,
+body {
+  min-height: 100vh;
+}
+
+html[data-theme="oscuro"],
+html[data-theme="oscuro"] body {
+  background-color: var(--bg-dark) !important;
+  color: #FFFFFF !important;
+}
+
+/* Botones y acentos adaptados a la paleta activa */
+.bg-\[\#EAB308\] {
   background-color: var(--accent) !important;
-  color: #ffffff !important;
+  color: var(--accent-fg) !important;
 }
 
-html[data-paleta="pastel"] .text-\[\#EAB308\],
-html[data-paleta="madera"] .text-\[\#EAB308\] {
+.hover\:bg-\[\#CA9A04\]:hover {
+  background-color: var(--accent-hover) !important;
+}
+
+.text-\[\#EAB308\] {
   color: var(--accent) !important;
 }
 
-html[data-paleta="pastel"] .border-\[\#EAB308\],
-html[data-paleta="madera"] .border-\[\#EAB308\] {
+.border-\[\#EAB308\] {
   border-color: var(--accent) !important;
 }
 
-/* 3. Modo Claro */
+/* En Modo Claro, los botones principales grandes usan fondo oscuro elegante con texto acento/blanco */
+html[data-theme="claro"] main button.bg-\[\#EAB308\],
+html[data-theme="claro"] main span.bg-\[\#EAB308\] {
+  background-color: #18181B !important;
+  color: var(--accent) !important;
+}
+
+html[data-theme="claro"][data-paleta="borgona"] main button.bg-\[\#EAB308\],
+html[data-theme="claro"][data-paleta="hormigon"] main button.bg-\[\#EAB308\],
+html[data-theme="claro"][data-paleta="azulplano"] main button.bg-\[\#EAB308\],
+html[data-theme="claro"][data-paleta="borgona"] main span.bg-\[\#EAB308\],
+html[data-theme="claro"][data-paleta="hormigon"] main span.bg-\[\#EAB308\],
+html[data-theme="claro"][data-paleta="azulplano"] main span.bg-\[\#EAB308\] {
+  background-color: var(--accent) !important;
+  color: #FFFFFF !important;
+}
+
+/* =========================================================================
+   4. MODO CLARO DE ALTO CONTRASTE (TARJETAS BLANCAS, ETIQUETAS Y TEXTOS LEGIBLES)
+   ========================================================================= */
+
 html[data-theme="claro"],
 html[data-theme="claro"] body {
-  background-color: #EFECE6 !important;
-  color: #18181B !important;
+  background-color: var(--bg-light) !important;
+  color: #111827 !important;
 }
 
-html[data-theme="claro"] aside {
-  background-color: #F7F5F0 !important;
-  border-color: #DFDAD2 !important;
-  color: #18181B !important;
+/* Topbar en Modo Claro */
+html[data-theme="claro"] header {
+  background-color: rgba(255, 255, 255, 0.94) !important;
+  border-color: #D1D5DB !important;
+  color: #111827 !important;
 }
 
-html[data-theme="claro"][data-paleta="pastel"] aside {
-  background-color: #F5E1E7 !important;
-  border-color: #E7C8D2 !important;
+html[data-theme="claro"] header input,
+html[data-theme="claro"] header button:not(.bg-\[\#EAB308\]) {
+  background-color: #F3F4F6 !important;
+  border-color: #D1D5DB !important;
+  color: #111827 !important;
 }
 
-html[data-theme="claro"][data-paleta="madera"] aside {
-  background-color: #EFE6DC !important;
-  border-color: #DFCBB8 !important;
+/* Fondos de página internos transparentes para mostrar el fondo global */
+html[data-theme="claro"] main > div {
+  background-color: transparent !important;
+  color: #111827 !important;
 }
 
-/* Fondos principales y tarjetas en Modo Claro */
-html[data-theme="claro"] .bg-\[\#121212\],
-html[data-theme="claro"] .bg-\[\#101010\],
-html[data-theme="claro"] .bg-\[\#0F0F0F\],
-html[data-theme="claro"] .bg-\[\#111111\] {
-  background-color: #EFECE6 !important;
-  color: #18181B !important;
-}
-
-html[data-theme="claro"] .bg-\[\#141414\],
-html[data-theme="claro"] .bg-\[\#161616\],
-html[data-theme="claro"] .bg-\[\#10141B\],
-html[data-theme="claro"] .bg-\[\#181818\] {
-  background-color: #E6E2DA !important;
-  color: #18181B !important;
-}
-
-html[data-theme="claro"] .bg-\[\#1A1A1A\],
-html[data-theme="claro"] .bg-\[\#181B22\],
-html[data-theme="claro"] .bg-\[\#1F1F1F\],
-html[data-theme="claro"] .bg-\[\#242424\]\/85 {
+/* Superficies principales (tarjetas) -> Blanco puro */
+html[data-theme="claro"] main .bg-\[\#242424\],
+html[data-theme="claro"] main .bg-\[\#242424\]\/85,
+html[data-theme="claro"] main .bg-\[\#1A1A1A\],
+html[data-theme="claro"] main .bg-\[\#1F1F1F\],
+html[data-theme="claro"] main .bg-\[\#181B22\] {
   background-color: #FFFFFF !important;
-  color: #18181B !important;
+  color: #111827 !important;
+  box-shadow: 0 4px 20px rgba(15, 23, 42, 0.05) !important;
 }
 
-/* Textos en Modo Claro */
-html[data-theme="claro"] .text-white {
-  color: #18181B !important;
+/* Superficies secundarias (inputs, subtarjetas, tablas) -> Gris suave #F3F4F6 */
+html[data-theme="claro"] main .bg-\[\#181818\],
+html[data-theme="claro"] main .bg-\[\#181818\]\/90,
+html[data-theme="claro"] main .bg-\[\#141414\],
+html[data-theme="claro"] main .bg-\[\#161616\],
+html[data-theme="claro"] main .bg-\[\#121212\],
+html[data-theme="claro"] main .bg-\[\#101010\],
+html[data-theme="claro"] main .bg-\[\#10141B\],
+html[data-theme="claro"] main .bg-\[\#151515\] {
+  background-color: #F3F4F6 !important;
+  color: #111827 !important;
 }
 
-html[data-theme="claro"] .text-gray-200,
-html[data-theme="claro"] .text-gray-300 {
-  color: #3F3F46 !important;
+/* Textos de alto contraste dentro de main y header en Modo Claro */
+html[data-theme="claro"] main .text-white,
+html[data-theme="claro"] header .text-white {
+  color: #111827 !important;
 }
 
-html[data-theme="claro"] .text-gray-400 {
-  color: #57534E !important;
+html[data-theme="claro"] main .text-gray-200,
+html[data-theme="claro"] main .text-gray-300,
+html[data-theme="claro"] header .text-gray-200,
+html[data-theme="claro"] header .text-gray-300 {
+  color: #374151 !important;
 }
 
-html[data-theme="claro"] .bg-cover .text-white {
+html[data-theme="claro"] main .text-gray-400,
+html[data-theme="claro"] main .text-gray-500,
+html[data-theme="claro"] header .text-gray-400 {
+  color: #6B7280 !important;
+}
+
+/* =========================================================================
+   5. TODAS LAS ETIQUETAS (BADGES / PILLS) LEGIBLES EN MODO CLARO
+   ========================================================================= */
+
+/* Etiquetas violeta / rubro (ej. "Proyecto y Diseño") */
+html[data-theme="claro"] .bg-purple-950\/70,
+html[data-theme="claro"] .bg-purple-950\/80 {
+  background-color: #F3E8FF !important;
+  border-color: #D8B4FE !important;
+}
+html[data-theme="claro"] .text-purple-300,
+html[data-theme="claro"] .text-purple-400 {
+  color: #6B21A8 !important;
+}
+
+/* Etiquetas neutras / contadores grises (bg-gray-800, bg-gray-900) */
+html[data-theme="claro"] main .bg-gray-800,
+html[data-theme="claro"] main .bg-gray-900 {
+  background-color: #E5E7EB !important;
+  color: #1F2937 !important;
+  border-color: #D1D5DB !important;
+}
+html[data-theme="claro"] main .bg-gray-800.text-gray-300,
+html[data-theme="claro"] main .bg-gray-800 .text-gray-300 {
+  color: #1F2937 !important;
+}
+
+/* Etiquetas verdes / completadas */
+html[data-theme="claro"] .bg-emerald-950\/70,
+html[data-theme="claro"] .bg-emerald-950\/75,
+html[data-theme="claro"] .bg-emerald-950\/80,
+html[data-theme="claro"] .bg-emerald-950\/90 {
+  background-color: #ECFDF5 !important;
+  border-color: #A7F3D0 !important;
+}
+html[data-theme="claro"] .text-emerald-300,
+html[data-theme="claro"] .text-emerald-400 {
+  color: #047857 !important;
+}
+
+/* Etiquetas rojas / atrasadas / alerta */
+html[data-theme="claro"] .bg-rose-950,
+html[data-theme="claro"] .bg-rose-950\/70,
+html[data-theme="claro"] .bg-rose-950\/75,
+html[data-theme="claro"] .bg-rose-950\/80,
+html[data-theme="claro"] .bg-rose-950\/90 {
+  background-color: #FEF2F2 !important;
+  border-color: #FECACA !important;
+}
+html[data-theme="claro"] .text-rose-300,
+html[data-theme="claro"] .text-rose-400,
+html[data-theme="claro"] .text-rose-500 {
+  color: #B91C1C !important;
+}
+
+/* Etiquetas azules / cyan / estado en curso */
+html[data-theme="claro"] .bg-cyan-950\/60,
+html[data-theme="claro"] .bg-cyan-950\/70,
+html[data-theme="claro"] .bg-blue-950\/70,
+html[data-theme="claro"] .bg-blue-950\/80 {
+  background-color: #EFF6FF !important;
+  border-color: #BFDBFE !important;
+}
+html[data-theme="claro"] .text-cyan-300,
+html[data-theme="claro"] .text-cyan-400,
+html[data-theme="claro"] .text-blue-300,
+html[data-theme="claro"] .text-blue-400 {
+  color: #1D4ED8 !important;
+}
+
+/* Etiquetas ámbar / doradas */
+html[data-theme="claro"] .bg-amber-950\/70,
+html[data-theme="claro"] .bg-amber-950\/75,
+html[data-theme="claro"] .bg-amber-950\/80,
+html[data-theme="claro"] .bg-\[\#EAB308\]\/15 {
+  background-color: #FFFBEB !important;
+  border-color: #FDE68A !important;
+}
+html[data-theme="claro"] main .text-\[\#EAB308\] {
+  color: #B45309 !important;
+}
+html[data-theme="claro"][data-paleta="borgona"] main .text-\[\#EAB308\] {
+  color: #A33757 !important;
+}
+html[data-theme="claro"][data-paleta="hormigon"] main .text-\[\#EAB308\] {
+  color: #B25B35 !important;
+}
+html[data-theme="claro"][data-paleta="azulplano"] main .text-\[\#EAB308\] {
+  color: #C25832 !important;
+}
+html[data-theme="claro"] main button.bg-\[\#EAB308\] .text-\[\#EAB308\],
+html[data-theme="claro"] main button.bg-\[\#EAB308\] {
+  color: var(--accent) !important;
+}
+html[data-theme="claro"][data-paleta="borgona"] main button.bg-\[\#EAB308\],
+html[data-theme="claro"][data-paleta="hormigon"] main button.bg-\[\#EAB308\],
+html[data-theme="claro"][data-paleta="azulplano"] main button.bg-\[\#EAB308\] {
   color: #FFFFFF !important;
+}
+
+/* Mantener letras blancas sobre banners con foto de portada o botones de acción */
+html[data-theme="claro"] .bg-cover .text-white,
+html[data-theme="claro"] .banner-oscuro .text-white,
+html[data-theme="claro"] .bg-rose-600,
+html[data-theme="claro"] .bg-emerald-600 {
+  color: #FFFFFF !important;
+}
+
+html[data-theme="claro"] .bg-cover .text-gray-300,
+html[data-theme="claro"] .banner-oscuro .text-gray-300 {
+  color: #E5E7EB !important;
 }
 
 /* Bordes y hover en Modo Claro */
 html[data-theme="claro"] .border-gray-800,
 html[data-theme="claro"] .border-gray-700,
-html[data-theme="claro"] .border-white\/10 {
-  border-color: #D6D1C9 !important;
+html[data-theme="claro"] .border-gray-700\/80,
+html[data-theme="claro"] .border-white\/10,
+html[data-theme="claro"] .border-white\/15,
+html[data-theme="claro"] .border-white\/20 {
+  border-color: #E5E7EB !important;
 }
 
-html[data-theme="claro"] .hover\:bg-gray-800:hover,
-html[data-theme="claro"] .hover\:bg-\[\#202020\]:hover,
-html[data-theme="claro"] .hover\:bg-\[\#222630\]:hover {
-  background-color: #EAE6DF !important;
+html[data-theme="claro"] .divide-white\/10 > :not([hidden]) ~ :not([hidden]),
+html[data-theme="claro"] .divide-gray-800\/70 > :not([hidden]) ~ :not([hidden]) {
+  border-color: #E5E7EB !important;
 }
 
-/* Fondo global visible sin sobrecargar la GPU con blur en tiempo real */
+html[data-theme="claro"] main .hover\:bg-gray-800:hover,
+html[data-theme="claro"] main .hover\:bg-white\/5:hover,
+html[data-theme="claro"] main .hover\:bg-white\/10:hover,
+html[data-theme="claro"] main .hover\:bg-\[\#202020\]:hover {
+  background-color: #E5E7EB !important;
+}
+
+/* =========================================================================
+   6. BLINDAJE DE BARRA LATERAL IZQUIERDA (SIEMPRE LEGIBLE SOBRE FONDO OSCURO)
+   ========================================================================= */
+
+html aside.sidebar-estudio,
+html[data-theme="claro"] aside.sidebar-estudio,
+html[data-theme="oscuro"] aside.sidebar-estudio {
+  background-color: var(--sidebar-bg) !important;
+  border-color: rgba(255, 255, 255, 0.12) !important;
+  color: #FFFFFF !important;
+}
+
+html aside.sidebar-estudio .sidebar-footer,
+html[data-theme="claro"] aside.sidebar-estudio .sidebar-footer {
+  background-color: var(--sidebar-footer) !important;
+  border-color: rgba(255, 255, 255, 0.1) !important;
+}
+
+html[data-theme="claro"] aside.sidebar-estudio .text-white {
+  color: #FFFFFF !important;
+}
+
+html[data-theme="claro"] aside.sidebar-estudio .text-gray-200,
+html[data-theme="claro"] aside.sidebar-estudio .text-gray-300 {
+  color: #F3F4F6 !important;
+}
+
+html[data-theme="claro"] aside.sidebar-estudio .text-gray-400 {
+  color: #9CA3AF !important;
+}
+
+html[data-theme="claro"] aside.sidebar-estudio .bg-\[\#EAB308\],
+html[data-theme="claro"] aside.sidebar-estudio .bg-\[\#EAB308\] * {
+  background-color: var(--accent) !important;
+  color: var(--accent-fg) !important;
+}
+
+html[data-theme="claro"] aside.sidebar-estudio .hover\:bg-white\/10:hover,
+html[data-theme="claro"] aside.sidebar-estudio .hover\:bg-white\/5:hover {
+  background-color: rgba(255, 255, 255, 0.1) !important;
+}
+
+/* Fondo global visible a pantalla completa */
 html[data-con-fondo="true"] main > div {
   background-color: transparent !important;
 }
 
-html[data-con-fondo="true"] header {
-  background-color: rgba(24, 24, 24, 0.92) !important;
+html[data-theme="oscuro"][data-con-fondo="true"] header {
+  background-color: rgba(24, 24, 24, 0.88) !important;
 }
 
-/* Aceleración de renderizado para listas y tarjetas */
+/* Aceleración de renderizado */
 table tbody tr,
 .grid > div {
   contain: layout style;

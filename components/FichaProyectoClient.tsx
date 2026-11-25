@@ -11,6 +11,10 @@ import ModalCompraPedido from '@/components/ModalCompraPedido';
 import ModalTarea from '@/components/ModalTarea';
 import ModalDocumento from '@/components/ModalDocumento';
 import ModalVisita from '@/components/ModalVisita';
+import CurvaInversion from '@/components/CurvaInversion';
+import TareasClient from '@/components/TareasClient';
+import VisorArchivoModal from '@/components/VisorArchivoModal';
+import ReporteClienteModal from '@/components/ReporteClienteModal';
 import {
   ArrowLeft,
   User,
@@ -32,6 +36,8 @@ import {
   X,
   Check,
   Tag,
+  Camera,
+  ShieldAlert,
 } from 'lucide-react';
 
 const ETAPAS_PROYECTO = [
@@ -39,8 +45,8 @@ const ETAPAS_PROYECTO = [
   'Anteproyecto y Diseño',
   'Proyecto Ejecutivo y Detalles',
   'Presupuesto y Compras',
-  'Ejecución / Obra / Montaje',
-  'Entrega Final',
+  'Dirección y Ejecución de Obra',
+  'Entrega y Post-Obra',
 ];
 
 export default function FichaProyectoClient({
@@ -72,9 +78,24 @@ export default function FichaProyectoClient({
   >('resumen');
   const [estadoProyecto, setEstadoProyecto] = useState(proyecto.estado || 'En Diseño');
   const [etapaActual, setEtapaActual] = useState(
-    proyecto.etapa_actual || 'Relevamiento y Concepto'
+    proyecto.etapa_actual || proyecto.etapa || 'Relevamiento y Concepto'
   );
   const [toast, setToast] = useState<string | null>(null);
+
+  // Estado Económico y Semáforo de Obra (ARS / USD + criterio seleccionable)
+  const [monedaEconomico, setMonedaEconomico] = useState<'USD' | 'ARS'>('USD');
+  const [criterioSemaforo, setCriterioSemaforo] = useState<
+    'avance_vs_cobrado' | 'margen_neto' | 'plazos_tareas'
+  >('avance_vs_cobrado');
+
+  // Visor Modal Integrado + Reporte Cliente
+  const [visorArchivo, setVisorArchivo] = useState<{ url: string; titulo: string } | null>(null);
+  const [modalReporteCliente, setModalReporteCliente] = useState(false);
+
+  // Filtro de galería en Bitácora
+  const [filtroEtiquetaFoto, setFiltroEtiquetaFoto] = useState<
+    'Todas' | 'Antes' | 'En Obra' | 'Final de Obra'
+  >('Todas');
 
   // Confirmación Papelera del Proyecto
   const [confirmarPapelera, setConfirmarPapelera] = useState(false);
@@ -98,7 +119,6 @@ export default function FichaProyectoClient({
     'todas' | 'atrasadas' | 'por_realizar' | 'en_curso' | 'completadas'
   >('todas');
 
-  // Modales compartidos
   const [modalCompra, setModalCompra] = useState(false);
   const [compraEditando, setCompraEditando] = useState<any | null>(null);
   const [modalMovimiento, setModalMovimiento] = useState(false);
@@ -110,7 +130,6 @@ export default function FichaProyectoClient({
   const [modalVisita, setModalVisita] = useState(false);
   const [visitaEditando, setVisitaEditando] = useState<any | null>(null);
 
-  // Modal Editar Proyecto
   const [modalEditarProy, setModalEditarProy] = useState(false);
   const [editNombre, setEditNombre] = useState(proyecto.nombre || '');
   const [editTipologia, setEditTipologia] = useState(proyecto.tipologia || '');
@@ -153,18 +172,9 @@ export default function FichaProyectoClient({
     return `${d}/${m}/${y}`;
   };
 
-  const abrirArchivoAdjunto = (url: string) => {
+  const abrirVisorIntegrado = (url: string, titulo = 'Vista previa') => {
     if (!url) return;
-    if (url.startsWith('data:')) {
-      const win = window.open();
-      if (win) {
-        win.document.write(
-          `<iframe src="${url}" frameborder="0" style="border:0;width:100%;height:100vh;" allowfullscreen></iframe>`
-        );
-      }
-    } else {
-      window.open(url, '_blank', 'noopener,noreferrer');
-    }
+    setVisorArchivo({ url, titulo });
   };
 
   const enviarProyectoAPapelera = async () => {
@@ -194,7 +204,13 @@ export default function FichaProyectoClient({
 
   const seleccionarEtapa = async (nuevaEtapa: string) => {
     setEtapaActual(nuevaEtapa);
-    await supabase.from('proyectos').update({ etapa_actual: nuevaEtapa }).eq('id', proyecto.id);
+    const nuevoEstado = nuevaEtapa === 'Entrega y Post-Obra' ? 'Finalizado' : estadoProyecto;
+    if (nuevaEtapa === 'Entrega y Post-Obra') setEstadoProyecto('Finalizado');
+
+    await supabase
+      .from('proyectos')
+      .update({ etapa_actual: nuevaEtapa, etapa: nuevaEtapa, estado: nuevoEstado })
+      .eq('id', proyecto.id);
     mostrarToast(`Etapa actualizada: ${nuevaEtapa}`);
     router.refresh();
   };
@@ -358,6 +374,14 @@ export default function FichaProyectoClient({
     return cot > 0 ? impOriginal / cot : 0;
   };
 
+  const obtenerArsEquivalente = (m: any) => {
+    const mon = String(m.moneda || 'USD').toUpperCase();
+    const impOriginal = Number(m.importe ?? 0) || Number(m.monto ?? 0);
+    if (mon === 'ARS') return impOriginal;
+    const cot = Number(m.valor_usd ?? 0) || 1450;
+    return impOriginal * cot;
+  };
+
   const esEgresoMov = (m: any) => {
     const t = String(m.tipo || '').toLowerCase();
     return t === 'egreso' || t === 'gasto' || t === 'compra';
@@ -382,10 +406,45 @@ export default function FichaProyectoClient({
       .reduce((acc, m) => acc + obtenerUsdEquivalente(m), 0);
   }, [movimientos]);
 
+  // Totales en ARS para el selector ARS | USD de Estado Económico
+  const cotizacionPromedioProyecto = useMemo(() => {
+    const conCot = movimientos.filter((m) => Number(m.valor_usd || 0) > 0);
+    if (conCot.length === 0) return 1450;
+    const suma = conCot.reduce((acc, m) => acc + Number(m.valor_usd), 0);
+    return Math.round(suma / conCot.length);
+  }, [movimientos]);
+
+  const presupuestoArs = useMemo(() => {
+    if (String(proyecto.moneda || 'USD').toUpperCase() === 'ARS') return presupuestoUsd;
+    return presupuestoUsd * cotizacionPromedioProyecto;
+  }, [proyecto.moneda, presupuestoUsd, cotizacionPromedioProyecto]);
+
+  const ingresosCobradosArs = useMemo(() => {
+    return movimientos
+      .filter((m) => !esEgresoMov(m) && esAbonadoMov(m.estado))
+      .reduce((acc, m) => acc + obtenerArsEquivalente(m), 0);
+  }, [movimientos]);
+
+  const egresosProyectoArs = useMemo(() => {
+    return movimientos
+      .filter((m) => esEgresoMov(m))
+      .reduce((acc, m) => acc + obtenerArsEquivalente(m), 0);
+  }, [movimientos]);
+
   const pendienteCobroUsd = Math.max(0, presupuestoUsd - ingresosCobradosUsd);
+  const pendienteCobroArs = Math.max(0, presupuestoArs - ingresosCobradosArs);
   const resultadoNetoUsd = ingresosCobradosUsd - egresosProyectoUsd;
   const porcentajeCobrado =
     presupuestoUsd > 0 ? Math.min(100, Math.round((ingresosCobradosUsd / presupuestoUsd) * 100)) : 0;
+
+  const movimientosNormalizadosUsd = useMemo(() => {
+    return movimientos.map((m) => ({
+      ...m,
+      moneda: 'USD',
+      importe: obtenerUsdEquivalente(m),
+      monto: obtenerUsdEquivalente(m),
+    }));
+  }, [movimientos]);
 
   const statsTareas = useMemo(() => {
     const hoyIso = new Date().toISOString().split('T')[0];
@@ -410,6 +469,111 @@ export default function FichaProyectoClient({
     return { atrasadas, porRealizar, enCurso, completadas };
   }, [tareas]);
 
+  // Cálculo del Semáforo de Obra según el criterio seleccionado
+  const semaforoObra = useMemo(() => {
+    const idxEtapa = Math.max(0, ETAPAS_PROYECTO.indexOf(etapaActual));
+    const avanceEtapaPct = Math.round(((idxEtapa + 1) / ETAPAS_PROYECTO.length) * 100);
+    const avanceTareasPct =
+      tareas.length > 0 ? Math.round((statsTareas.completadas / tareas.length) * 100) : avanceEtapaPct;
+    const avanceObraPct = tareas.length > 0 ? Math.round((avanceEtapaPct + avanceTareasPct) / 2) : avanceEtapaPct;
+
+    const gastadoPct =
+      presupuestoUsd > 0 ? Math.round((egresosProyectoUsd / presupuestoUsd) * 100) : 0;
+
+    if (criterioSemaforo === 'margen_neto') {
+      if (egresosProyectoUsd > ingresosCobradosUsd && egresosProyectoUsd > 0) {
+        return {
+          nivel: 'rojo',
+          clase: 'bg-rose-950/75 border-rose-700/60 text-rose-300',
+          dot: 'bg-rose-400',
+          titulo: 'Alerta de Caja · Gastos superan lo cobrado',
+          detalle: `Cobrado ${porcentajeCobrado}% · Gastado ${gastadoPct}% del presupuesto`,
+        };
+      }
+      if (ingresosCobradosUsd > 0 && egresosProyectoUsd > ingresosCobradosUsd * 0.8) {
+        return {
+          nivel: 'ambar',
+          clase: 'bg-amber-950/75 border-amber-700/60 text-[#EAB308]',
+          dot: 'bg-[#EAB308]',
+          titulo: 'Atención · Margen ajustado (>80% ejecutado)',
+          detalle: `Cobrado ${porcentajeCobrado}% · Gastado ${gastadoPct}% del presupuesto`,
+        };
+      }
+      return {
+        nivel: 'verde',
+        clase: 'bg-emerald-950/75 border-emerald-700/60 text-emerald-300',
+        dot: 'bg-emerald-400',
+        titulo: 'Margen Saludable · Caja positiva',
+        detalle: `Cobrado ${porcentajeCobrado}% · Gastado ${gastadoPct}% del presupuesto`,
+      };
+    }
+
+    if (criterioSemaforo === 'plazos_tareas') {
+      if (statsTareas.atrasadas > 0) {
+        return {
+          nivel: 'rojo',
+          clase: 'bg-rose-950/75 border-rose-700/60 text-rose-300',
+          dot: 'bg-rose-400',
+          titulo: `Desvío de Plazo · ${statsTareas.atrasadas} ${statsTareas.atrasadas === 1 ? 'tarea atrasada' : 'tareas atrasadas'}`,
+          detalle: `Avance físico ${avanceObraPct}% · Cobrado ${porcentajeCobrado}%`,
+        };
+      }
+      if (avanceObraPct > porcentajeCobrado + 15) {
+        return {
+          nivel: 'ambar',
+          clase: 'bg-amber-950/75 border-amber-700/60 text-[#EAB308]',
+          dot: 'bg-[#EAB308]',
+          titulo: 'Certificación Pendiente · Obra adelantada al cobro',
+          detalle: `Avance físico ${avanceObraPct}% · Cobrado ${porcentajeCobrado}%`,
+        };
+      }
+      return {
+        nivel: 'verde',
+        clase: 'bg-emerald-950/75 border-emerald-700/60 text-emerald-300',
+        dot: 'bg-emerald-400',
+        titulo: 'Cronograma en Tiempo · Sin atrasos',
+        detalle: `Avance físico ${avanceObraPct}% · Cobrado ${porcentajeCobrado}%`,
+      };
+    }
+
+    // Criterio por defecto: avance_vs_cobrado
+    if (egresosProyectoUsd > ingresosCobradosUsd && egresosProyectoUsd > 0) {
+      return {
+        nivel: 'rojo',
+        clase: 'bg-rose-950/75 border-rose-700/60 text-rose-300',
+        dot: 'bg-rose-400',
+        titulo: 'Desvío Financiero · Gastos superan lo cobrado',
+        detalle: `Avance obra ${avanceObraPct}% · Cobrado ${porcentajeCobrado}% · Gastado ${gastadoPct}%`,
+      };
+    }
+    if (avanceObraPct > porcentajeCobrado + 10) {
+      return {
+        nivel: 'ambar',
+        clase: 'bg-amber-950/75 border-amber-700/60 text-[#EAB308]',
+        dot: 'bg-[#EAB308]',
+        titulo: 'Atención · Avance de obra supera lo cobrado',
+        detalle: `Avance obra ${avanceObraPct}% · Cobrado ${porcentajeCobrado}% · Gastado ${gastadoPct}%`,
+      };
+    }
+    return {
+      nivel: 'verde',
+      clase: 'bg-emerald-950/75 border-emerald-700/60 text-emerald-300',
+      dot: 'bg-emerald-400',
+      titulo: 'Obra Equilibrada · Margen saludable',
+      detalle: `Avance obra ${avanceObraPct}% · Cobrado ${porcentajeCobrado}% · Gastado ${gastadoPct}%`,
+    };
+  }, [
+    etapaActual,
+    tareas.length,
+    statsTareas.completadas,
+    statsTareas.atrasadas,
+    presupuestoUsd,
+    egresosProyectoUsd,
+    ingresosCobradosUsd,
+    porcentajeCobrado,
+    criterioSemaforo,
+  ]);
+
   const tareasFiltradasResumen = useMemo(() => {
     const hoyIso = new Date().toISOString().split('T')[0];
     return tareas.filter((t) => {
@@ -430,6 +594,22 @@ export default function FichaProyectoClient({
     return futuras[0] || null;
   }, [visitas]);
 
+  const todasFotosBitacora = useMemo(() => {
+    const lista = visitas.flatMap((v) =>
+      Array.isArray(v.fotos)
+        ? v.fotos.map((f: any) => ({
+            ...f,
+            visitaId: v.id,
+            visitaTitulo: v.titulo || v.motivo || 'Visita de obra',
+            visitaFecha: v.fecha,
+            visitaResponsable: v.responsable,
+          }))
+        : []
+    );
+    if (filtroEtiquetaFoto === 'Todas') return lista;
+    return lista.filter((f) => (f.etiqueta || 'En Obra') === filtroEtiquetaFoto);
+  }, [visitas, filtroEtiquetaFoto]);
+
   const docsListos = useMemo(() => {
     return documentos.filter(
       (d) => d.estado === 'Listo / Aprobado' || d.estado === 'Entregado / Visado'
@@ -438,7 +618,6 @@ export default function FichaProyectoClient({
 
   const docsEnDesarrollo = Math.max(0, documentos.length - docsListos);
 
-  // Bloque reutilizable de Comentarios y Menciones (usado en Resumen General y en la pestaña Comentarios)
   const renderTarjetaComentarios = (alturaMaximaLista = 'max-h-60') => (
     <div className="bg-[#242424] border border-white/10 rounded-2xl p-6 shadow-xl flex flex-col">
       <div className="mb-4">
@@ -540,14 +719,14 @@ export default function FichaProyectoClient({
             className="bg-[#242424] border border-white/10 rounded-xl px-3 py-2 text-xs font-semibold text-white cursor-pointer"
           >
             <option value="En Diseño">En Diseño</option>
-            <option value="En Obra">En Obra</option>
-            <option value="En Pausa">En Pausa</option>
+            <option value="En Curso">En Curso</option>
+            <option value="Pausado">Pausado</option>
             <option value="Finalizado">Finalizado</option>
           </select>
 
           <button
             type="button"
-            onClick={() => window.print()}
+            onClick={() => setModalReporteCliente(true)}
             className="bg-emerald-600/20 border border-emerald-500/40 text-emerald-400 hover:bg-emerald-600/30 px-3.5 py-2 rounded-xl text-xs font-bold inline-flex items-center gap-1.5 cursor-pointer"
           >
             <FileText className="w-3.5 h-3.5" /> Reporte para el cliente
@@ -739,9 +918,9 @@ export default function FichaProyectoClient({
             </div>
           </div>
 
-          {/* 2. DATOS PRINCIPALES + ESTADO ECONÓMICO Y VISITAS */}
+          {/* 2. DATOS PRINCIPALES + ESTADO ECONÓMICO (ARS/USD + SEMÁFORO) Y VISITAS */}
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-            <div className="lg:col-span-7 bg-[#242424] border border-white/10 rounded-2xl p-6 shadow-xl flex flex-col justify-between">
+            <div className="lg:col-span-6 bg-[#242424] border border-white/10 rounded-2xl p-6 shadow-xl flex flex-col justify-between">
               <div>
                 <div className="flex justify-between items-center mb-4">
                   <h2 className="text-xs font-extrabold uppercase tracking-wider text-gray-300">
@@ -807,12 +986,39 @@ export default function FichaProyectoClient({
               </div>
             </div>
 
-            <div className="lg:col-span-5 bg-[#242424] border border-white/10 rounded-2xl p-6 shadow-xl space-y-5">
+            <div className="lg:col-span-6 bg-[#242424] border border-white/10 rounded-2xl p-6 shadow-xl space-y-5">
               <div>
-                <div className="flex justify-between items-center mb-4">
-                  <h2 className="text-xs font-extrabold uppercase tracking-wider text-gray-300">
-                    ESTADO ECONÓMICO (USD)
-                  </h2>
+                <div className="flex flex-wrap justify-between items-center gap-2 mb-3">
+                  <div className="flex items-center gap-2">
+                    <h2 className="text-xs font-extrabold uppercase tracking-wider text-gray-300">
+                      ESTADO ECONÓMICO ({monedaEconomico})
+                    </h2>
+                    <div className="bg-[#181818] border border-white/10 rounded-lg p-0.5 inline-flex">
+                      <button
+                        type="button"
+                        onClick={() => setMonedaEconomico('USD')}
+                        className={`px-2 py-0.5 rounded text-[10px] font-extrabold cursor-pointer ${
+                          monedaEconomico === 'USD'
+                            ? 'bg-[#EAB308] text-black'
+                            : 'text-gray-400 hover:text-white'
+                        }`}
+                      >
+                        USD
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setMonedaEconomico('ARS')}
+                        className={`px-2 py-0.5 rounded text-[10px] font-extrabold cursor-pointer ${
+                          monedaEconomico === 'ARS'
+                            ? 'bg-[#EAB308] text-black'
+                            : 'text-gray-400 hover:text-white'
+                        }`}
+                      >
+                        ARS
+                      </button>
+                    </div>
+                  </div>
+
                   <button
                     type="button"
                     onClick={() => setPestanaActiva('finanzas')}
@@ -822,45 +1028,58 @@ export default function FichaProyectoClient({
                   </button>
                 </div>
 
+                {/* SEMÁFORO DE OBRA CON CRITERIO SELECCIONABLE */}
+                <div className={`rounded-xl border p-3 mb-3.5 ${semaforoObra.clase}`}>
+                  <div className="flex flex-wrap justify-between items-center gap-2">
+                    <div className="flex items-center gap-2">
+                      <span className={`w-2.5 h-2.5 rounded-full ${semaforoObra.dot}`} />
+                      <span className="text-xs font-extrabold">{semaforoObra.titulo}</span>
+                    </div>
+                    <select
+                      value={criterioSemaforo}
+                      onChange={(e) => setCriterioSemaforo(e.target.value as any)}
+                      className="bg-black/40 border border-white/15 rounded-lg px-2 py-1 text-[10px] font-bold text-white cursor-pointer"
+                      title="Elegir criterio de evaluación del semáforo"
+                    >
+                      <option value="avance_vs_cobrado">Regla: Avance vs. Cobro</option>
+                      <option value="margen_neto">Regla: Cobrado vs. Gastos</option>
+                      <option value="plazos_tareas">Regla: Plazos y Tareas</option>
+                    </select>
+                  </div>
+                  <div className="text-[11px] opacity-90 mt-1 pl-4">{semaforoObra.detalle}</div>
+                </div>
+
                 <div className="grid grid-cols-2 gap-3">
                   <div className="bg-[#181818] border border-white/10 rounded-xl p-3.5">
                     <div className="text-[11px] text-gray-400">Presupuesto / Honorarios</div>
                     <div className="text-base font-extrabold text-white mt-1">
-                      USD $
-                      {presupuestoUsd.toLocaleString('es-AR', {
-                        minimumFractionDigits: presupuestoUsd % 1 === 0 ? 0 : 2,
-                        maximumFractionDigits: 2,
-                      })}
+                      {monedaEconomico === 'USD'
+                        ? `USD $${presupuestoUsd.toLocaleString('es-AR', { maximumFractionDigits: 2 })}`
+                        : `ARS $${presupuestoArs.toLocaleString('es-AR', { maximumFractionDigits: 0 })}`}
                     </div>
                   </div>
                   <div className="bg-[#181818] border border-white/10 rounded-xl p-3.5">
                     <div className="text-[11px] text-gray-400">Cobrado</div>
                     <div className="text-base font-extrabold text-emerald-400 mt-1">
-                      USD $
-                      {ingresosCobradosUsd.toLocaleString('es-AR', {
-                        minimumFractionDigits: ingresosCobradosUsd % 1 === 0 ? 0 : 2,
-                        maximumFractionDigits: 2,
-                      })}
+                      {monedaEconomico === 'USD'
+                        ? `USD $${ingresosCobradosUsd.toLocaleString('es-AR', { maximumFractionDigits: 2 })}`
+                        : `ARS $${ingresosCobradosArs.toLocaleString('es-AR', { maximumFractionDigits: 0 })}`}
                     </div>
                   </div>
                   <div className="bg-[#181818] border border-white/10 rounded-xl p-3.5">
                     <div className="text-[11px] text-gray-400">Saldo por cobrar</div>
                     <div className="text-base font-extrabold text-[#EAB308] mt-1">
-                      USD $
-                      {pendienteCobroUsd.toLocaleString('es-AR', {
-                        minimumFractionDigits: pendienteCobroUsd % 1 === 0 ? 0 : 2,
-                        maximumFractionDigits: 2,
-                      })}
+                      {monedaEconomico === 'USD'
+                        ? `USD $${pendienteCobroUsd.toLocaleString('es-AR', { maximumFractionDigits: 2 })}`
+                        : `ARS $${pendienteCobroArs.toLocaleString('es-AR', { maximumFractionDigits: 0 })}`}
                     </div>
                   </div>
                   <div className="bg-[#181818] border border-white/10 rounded-xl p-3.5">
                     <div className="text-[11px] text-gray-400">Gastos / Compras</div>
                     <div className="text-base font-extrabold text-rose-500 mt-1">
-                      USD $
-                      {egresosProyectoUsd.toLocaleString('es-AR', {
-                        minimumFractionDigits: egresosProyectoUsd % 1 === 0 ? 0 : 2,
-                        maximumFractionDigits: 2,
-                      })}
+                      {monedaEconomico === 'USD'
+                        ? `USD $${egresosProyectoUsd.toLocaleString('es-AR', { maximumFractionDigits: 2 })}`
+                        : `ARS $${egresosProyectoArs.toLocaleString('es-AR', { maximumFractionDigits: 0 })}`}
                     </div>
                   </div>
                 </div>
@@ -946,7 +1165,7 @@ export default function FichaProyectoClient({
                   onClick={() => setPestanaActiva('tareas')}
                   className="text-xs font-bold text-[#EAB308] hover:underline cursor-pointer"
                 >
-                  Ver todas →
+                  Abrir Kanban / Cronograma →
                 </button>
               </div>
 
@@ -1109,7 +1328,6 @@ export default function FichaProyectoClient({
               </div>
             </div>
 
-            {/* DOCUMENTACIÓN Y ENTREGAS CONECTADA */}
             <div className="lg:col-span-5 bg-[#242424] border border-white/10 rounded-2xl p-6 shadow-xl flex flex-col justify-between">
               <div>
                 <div className="flex justify-between items-start gap-3 mb-4">
@@ -1193,7 +1411,7 @@ export default function FichaProyectoClient({
             </div>
           </div>
 
-          {/* 4. EQUIPO + COMENTARIOS (EN RESUMEN GENERAL) */}
+          {/* 4. EQUIPO + COMENTARIOS */}
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
             <div className="lg:col-span-6 bg-[#242424] border border-white/10 rounded-2xl p-6 shadow-xl">
               <div className="flex justify-between items-start gap-3 mb-4">
@@ -1419,6 +1637,14 @@ export default function FichaProyectoClient({
             </div>
           </div>
 
+          <CurvaInversion
+            movimientos={movimientosNormalizadosUsd}
+            moneda="USD"
+            presupuestoTotal={presupuestoUsd}
+            titulo={`Curva S de Inversión · ${proyecto.codigo} (USD)`}
+            subtitulo="Evolución acumulada contra el presupuesto pactado, cobros recibidos y gastos ejecutados"
+          />
+
           <div className="bg-[#242424] border border-white/10 rounded-2xl p-6 shadow-xl mb-6">
             <h3 className="text-sm font-bold text-white mb-4">
               Historial de Movimientos del Proyecto ({movimientos.length})
@@ -1458,11 +1684,14 @@ export default function FichaProyectoClient({
                               type="button"
                               onClick={(e) => {
                                 e.stopPropagation();
-                                abrirArchivoAdjunto(m.archivo_url);
+                                abrirVisorIntegrado(
+                                  m.archivo_url,
+                                  m.concepto || m.comprobante || 'Comprobante'
+                                );
                               }}
                               className="bg-amber-950/70 border border-amber-700/60 text-[#EAB308] hover:bg-amber-900/50 px-2 py-0.5 rounded text-[10px] font-bold inline-flex items-center gap-1 cursor-pointer"
                             >
-                              <FileText className="w-3 h-3" /> PDF
+                              <FileText className="w-3 h-3" /> Ver PDF
                             </button>
                           )}
                         </div>
@@ -1623,7 +1852,10 @@ export default function FichaProyectoClient({
                             type="button"
                             onClick={(e) => {
                               e.stopPropagation();
-                              abrirArchivoAdjunto(c.archivo_url);
+                              abrirVisorIntegrado(
+                                c.archivo_url,
+                                `${c.proveedor || 'Factura'} · ${c.nro_orden || c.concepto}`
+                              );
                             }}
                             className="px-2.5 py-1 rounded-lg bg-blue-500/15 border border-blue-500/40 text-blue-400 hover:bg-blue-500/25 font-semibold inline-flex items-center gap-1 cursor-pointer"
                           >
@@ -1640,132 +1872,159 @@ export default function FichaProyectoClient({
         </div>
       )}
 
-      {/* PESTAÑA: TAREAS */}
+      {/* PESTAÑA: TAREAS (REUTILIZA TareasClient CON LISTA | KANBAN | CRONOGRAMA) */}
       {pestanaActiva === 'tareas' && (
         <div className="bg-[#242424] border border-white/10 rounded-2xl p-6 shadow-xl">
-          <div className="flex justify-between items-center mb-4">
-            <h2 className="text-base font-bold text-white flex items-center gap-2">
-              <CheckSquare className="w-4 h-4 text-[#EAB308]" /> Tareas vinculadas ({tareas.length})
-            </h2>
-            <button
-              type="button"
-              onClick={() => {
-                setTareaEditando(null);
-                setModalTarea(true);
-              }}
-              className="bg-[#EAB308] hover:bg-[#CA9A04] text-black px-4 py-2 rounded-xl font-bold text-xs inline-flex items-center gap-1.5 cursor-pointer"
-            >
-              <Plus className="w-4 h-4" /> Nueva tarea
-            </button>
-          </div>
-          {tareas.length === 0 ? (
-            <p className="text-xs text-gray-400">No hay tareas registradas para este proyecto.</p>
-          ) : (
-            <div className="space-y-2.5">
-              {tareas.map((t) => {
-                const completada = t.estado === 'Finalizado' || t.estado === 'Completada';
-                return (
-                  <div
-                    key={t.id}
-                    onClick={() => {
-                      setTareaEditando(t);
-                      setModalTarea(true);
-                    }}
-                    className="bg-[#181818] border border-white/10 hover:border-white/25 rounded-xl p-3.5 flex flex-wrap justify-between items-center gap-3 text-xs cursor-pointer"
-                  >
-                    <div className="flex items-start gap-3">
-                      <button
-                        type="button"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          toggleCompletarTarea(t);
-                        }}
-                        className={`mt-0.5 w-4 h-4 rounded-full border flex items-center justify-center cursor-pointer ${
-                          completada
-                            ? 'bg-emerald-500 border-emerald-500 text-black'
-                            : 'border-gray-500 hover:border-[#EAB308]'
-                        }`}
-                      >
-                        {completada && <Check className="w-3 h-3 stroke-[3]" />}
-                      </button>
+          <TareasClient
+            tareasIniciales={tareas}
+            proyectos={[proyecto]}
+            equipo={equipo}
+            proyectoFijoCodigo={proyecto.codigo}
+            compacto={true}
+          />
+        </div>
+      )}
+
+      {/* PESTAÑA: VISITAS Y BITÁCORA FOTOGRÁFICA */}
+      {pestanaActiva === 'visitas' && (
+        <div className="space-y-6">
+          <div className="bg-[#242424] border border-white/10 rounded-2xl p-6 shadow-xl">
+            <div className="flex justify-between items-center mb-4">
+              <h2 className="text-base font-bold text-white flex items-center gap-2">
+                <Calendar className="w-4 h-4 text-[#EAB308]" /> Visitas y Reuniones ({visitas.length})
+              </h2>
+              <button
+                type="button"
+                onClick={() => {
+                  setVisitaEditando(null);
+                  setModalVisita(true);
+                }}
+                className="bg-[#EAB308] hover:bg-[#CA9A04] text-black px-4 py-2 rounded-xl font-bold text-xs inline-flex items-center gap-1.5 cursor-pointer"
+              >
+                <Plus className="w-4 h-4" /> Agendar visita / subir fotos
+              </button>
+            </div>
+            {visitas.length === 0 ? (
+              <p className="text-xs text-gray-400">No hay visitas registradas para este proyecto.</p>
+            ) : (
+              <div className="space-y-2.5">
+                {visitas.map((v) => {
+                  const cantFotos = Array.isArray(v.fotos) ? v.fotos.length : 0;
+                  return (
+                    <div
+                      key={v.id}
+                      onClick={() => {
+                        setVisitaEditando(v);
+                        setModalVisita(true);
+                      }}
+                      className="bg-[#181818] border border-white/10 hover:border-white/25 rounded-xl p-4 flex flex-wrap justify-between items-center gap-3 text-xs cursor-pointer transition-colors"
+                    >
                       <div>
-                        <div className="flex flex-wrap items-center gap-2">
-                          <span
-                            className={`font-bold ${
-                              completada ? 'line-through text-gray-400' : 'text-white'
-                            }`}
-                          >
-                            {t.titulo}
-                          </span>
-                          {t.rubro && (
-                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-purple-950/70 border border-purple-700/50 text-purple-300 text-[10px] font-bold">
-                              <Tag className="w-2.5 h-2.5" /> {t.rubro}
+                        <div className="font-bold text-white flex items-center gap-2">
+                          <span>{v.titulo || v.motivo}</span>
+                          {cantFotos > 0 && (
+                            <span className="px-2 py-0.5 rounded bg-[#EAB308]/15 border border-[#EAB308]/40 text-[#EAB308] text-[10px] font-bold inline-flex items-center gap-1">
+                              <Camera className="w-3 h-3" /> {cantFotos}{' '}
+                              {cantFotos === 1 ? 'foto' : 'fotos'}
                             </span>
                           )}
                         </div>
                         <div className="text-gray-400 mt-0.5">
-                          {t.responsable || 'Sin asignar'} · Vence:{' '}
-                          {t.fecha_vencimiento ? formatearFechaCorta(t.fecha_vencimiento) : 'Sin fecha'}
+                          {formatearFechaCorta(v.fecha)}{' '}
+                          {v.horario || v.hora ? `· ${v.horario || v.hora} hs` : ''}
+                          {v.responsable ? ` · ${v.responsable}` : ''}
                         </div>
+                        {v.acta && <p className="text-gray-300 mt-1.5">{v.acta}</p>}
+                      </div>
+                      <span className="px-2.5 py-1 rounded-full bg-gray-800 text-gray-200 font-semibold">
+                        {v.estado || 'Programada'}
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+
+          {/* GALERÍA CRONOLÓGICA DE BITÁCORA FOTOGRÁFICA */}
+          <div className="bg-[#242424] border border-white/10 rounded-2xl p-6 shadow-xl">
+            <div className="flex flex-wrap justify-between items-center gap-3 mb-4">
+              <div>
+                <h3 className="text-base font-bold text-white flex items-center gap-2">
+                  <Camera className="w-4 h-4 text-[#EAB308]" />
+                  Bitácora Fotográfica de Obra ({todasFotosBitacora.length})
+                </h3>
+                <p className="text-xs text-gray-400 mt-0.5">
+                  Registro visual cronológico del avance de obra (tocá cualquier foto para ampliarla)
+                </p>
+              </div>
+
+              <div className="bg-[#181818] border border-white/10 rounded-xl p-1 inline-flex gap-1">
+                {(['Todas', 'Antes', 'En Obra', 'Final de Obra'] as const).map((et) => (
+                  <button
+                    key={et}
+                    type="button"
+                    onClick={() => setFiltroEtiquetaFoto(et)}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-bold cursor-pointer transition-colors ${
+                      filtroEtiquetaFoto === et
+                        ? 'bg-[#EAB308] text-black'
+                        : 'text-gray-300 hover:text-white'
+                    }`}
+                  >
+                    {et}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {todasFotosBitacora.length === 0 ? (
+              <div className="bg-[#181818] border border-dashed border-white/15 rounded-xl p-8 text-center text-xs text-gray-400">
+                No hay fotografías cargadas en esta categoría. Editá o creá una visita para adjuntar fotos.
+              </div>
+            ) : (
+              <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4">
+                {todasFotosBitacora.map((foto: any, idx: number) => (
+                  <div
+                    key={foto.id || idx}
+                    onClick={() =>
+                      abrirVisorIntegrado(
+                        foto.url,
+                        `${foto.etiqueta || 'En Obra'} · ${foto.visitaTitulo} (${formatearFechaCorta(
+                          foto.visitaFecha
+                        )})`
+                      )
+                    }
+                    className="bg-[#181818] border border-white/10 hover:border-[#EAB308]/60 rounded-xl overflow-hidden cursor-pointer group transition-all"
+                  >
+                    <div className="relative h-40 bg-black overflow-hidden">
+                      <img
+                        src={foto.url}
+                        alt={foto.etiqueta || 'Registro'}
+                        className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
+                      />
+                      <span
+                        className={`absolute top-2 left-2 px-2 py-0.5 rounded text-[10px] font-extrabold ${
+                          foto.etiqueta === 'Antes'
+                            ? 'bg-gray-900/90 text-gray-200 border border-gray-700'
+                            : foto.etiqueta === 'Final de Obra'
+                            ? 'bg-emerald-950/90 text-emerald-300 border border-emerald-700'
+                            : 'bg-black/85 text-[#EAB308] border border-[#EAB308]/50'
+                        }`}
+                      >
+                        {foto.etiqueta || 'En Obra'}
+                      </span>
+                    </div>
+                    <div className="p-3 text-xs">
+                      <div className="font-bold text-white truncate">{foto.visitaTitulo}</div>
+                      <div className="text-[11px] text-gray-400 mt-0.5">
+                        {formatearFechaCorta(foto.visitaFecha)}
                       </div>
                     </div>
-                    <span className="px-2.5 py-1 rounded-full bg-gray-800 text-gray-200 font-semibold">
-                      {t.estado}
-                    </span>
                   </div>
-                );
-              })}
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* PESTAÑA: VISITAS */}
-      {pestanaActiva === 'visitas' && (
-        <div className="bg-[#242424] border border-white/10 rounded-2xl p-6 shadow-xl">
-          <div className="flex justify-between items-center mb-4">
-            <h2 className="text-base font-bold text-white flex items-center gap-2">
-              <Calendar className="w-4 h-4 text-[#EAB308]" /> Visitas y Bitácora ({visitas.length})
-            </h2>
-            <button
-              type="button"
-              onClick={() => {
-                setVisitaEditando(null);
-                setModalVisita(true);
-              }}
-              className="bg-[#EAB308] hover:bg-[#CA9A04] text-black px-4 py-2 rounded-xl font-bold text-xs inline-flex items-center gap-1.5 cursor-pointer"
-            >
-              <Plus className="w-4 h-4" /> Agendar visita
-            </button>
+                ))}
+              </div>
+            )}
           </div>
-          {visitas.length === 0 ? (
-            <p className="text-xs text-gray-400">No hay visitas registradas para este proyecto.</p>
-          ) : (
-            <div className="space-y-2">
-              {visitas.map((v) => (
-                <div
-                  key={v.id}
-                  onClick={() => {
-                    setVisitaEditando(v);
-                    setModalVisita(true);
-                  }}
-                  className="bg-[#181818] border border-white/10 hover:border-white/25 rounded-xl p-3.5 flex justify-between items-center text-xs cursor-pointer transition-colors"
-                >
-                  <div>
-                    <div className="font-bold text-white">{v.titulo || v.motivo}</div>
-                    <div className="text-gray-400 mt-0.5">
-                      {formatearFechaCorta(v.fecha)}{' '}
-                      {v.horario || v.hora ? `· ${v.horario || v.hora} hs` : ''}
-                      {v.responsable ? ` · ${v.responsable}` : ''}
-                    </div>
-                  </div>
-                  <span className="px-2.5 py-1 rounded-full bg-gray-800 text-gray-200 font-semibold">
-                    {v.estado || 'Programada'}
-                  </span>
-                </div>
-              ))}
-            </div>
-          )}
         </div>
       )}
 
@@ -1856,7 +2115,10 @@ export default function FichaProyectoClient({
                           type="button"
                           onClick={(e) => {
                             e.stopPropagation();
-                            abrirArchivoAdjunto(d.archivo_url);
+                            abrirVisorIntegrado(
+                              d.archivo_url,
+                              d.codigo_lamina ? `${d.codigo_lamina} · ${d.titulo}` : d.titulo
+                            );
                           }}
                           className="px-2.5 py-1 rounded-lg bg-blue-500/15 border border-blue-500/40 text-blue-400 hover:bg-blue-500/25 text-xs font-semibold inline-flex items-center gap-1 cursor-pointer"
                         >
@@ -2103,6 +2365,30 @@ export default function FichaProyectoClient({
           </div>,
           document.body
         )}
+
+      {/* VISOR MODAL INTEGRADO (PDFs, Planos e Imágenes) */}
+      <VisorArchivoModal
+        abierto={Boolean(visorArchivo)}
+        url={visorArchivo?.url || ''}
+        titulo={visorArchivo?.titulo}
+        onClose={() => setVisorArchivo(null)}
+      />
+
+      {/* REPORTE EJECUTIVO PARA EL CLIENTE */}
+      <ReporteClienteModal
+        abierto={modalReporteCliente}
+        onClose={() => setModalReporteCliente(false)}
+        proyecto={proyecto}
+        cliente={clienteAsociado}
+        etapaActual={etapaActual}
+        etapasLista={ETAPAS_PROYECTO}
+        tareas={tareas}
+        visitas={visitas}
+        movimientos={movimientos}
+        presupuestoUsd={presupuestoUsd}
+        cobradoUsd={ingresosCobradosUsd}
+        gastosUsd={egresosProyectoUsd}
+      />
 
       {/* MODALES COMPARTIDOS */}
       <ModalVisita

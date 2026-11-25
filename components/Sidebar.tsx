@@ -89,7 +89,7 @@ export default function Sidebar() {
 
   return (
     <>
-      <aside className="w-60 sticky top-3 h-[calc(100vh-1.5rem)] my-3 ml-3 rounded-3xl bg-[#23272A] border border-white/10 flex flex-col justify-between flex-shrink-0 z-30 shadow-2xl overflow-hidden">
+      <aside className="sidebar-estudio w-60 sticky top-3 h-[calc(100vh-1.5rem)] my-3 ml-3 rounded-3xl bg-[#23272A] border border-white/10 flex flex-col justify-between flex-shrink-0 z-30 shadow-2xl overflow-hidden transition-colors">
         {/* PARTE SUPERIOR + NAVEGACIÓN */}
         <div className="flex-1 overflow-y-auto">
           <div className="px-5 pt-5 pb-4 border-b border-white/10">
@@ -129,7 +129,7 @@ export default function Sidebar() {
                   className={`flex items-center gap-3.5 px-4 py-2.5 rounded-2xl text-[13px] transition-all ${
                     activo
                       ? 'bg-[#EAB308] text-black font-bold shadow-md'
-                      : 'text-gray-200 font-medium hover:bg-white/5 hover:text-white'
+                      : 'text-gray-200 font-medium hover:bg-white/10 hover:text-white'
                   }`}
                 >
                   <Icon className="w-4 h-4 flex-shrink-0 stroke-[1.9]" />
@@ -140,11 +140,11 @@ export default function Sidebar() {
           </nav>
         </div>
 
-        {/* PIE FIJO DEL MENÚ (PAPELERA, CONFIGURACIÓN Y QUIÉN INICIÓ SESIÓN) */}
-        <div className="bg-[#1D2023] border-t border-white/10 p-3.5 space-y-1 flex-shrink-0">
+        {/* PIE FIJO DEL MENÚ */}
+        <div className="sidebar-footer bg-[#1D2023] border-t border-white/10 p-3.5 space-y-1 flex-shrink-0">
           <Link
             href="/papelera"
-            className="flex items-center justify-between px-3.5 py-2 rounded-xl text-[13px] font-medium text-gray-200 hover:bg-white/5 transition-colors"
+            className="flex items-center justify-between px-3.5 py-2 rounded-xl text-[13px] font-medium text-gray-200 hover:bg-white/10 transition-colors"
           >
             <span className="inline-flex items-center gap-3">
               <Trash2 className="w-4 h-4 text-gray-300" />
@@ -158,7 +158,7 @@ export default function Sidebar() {
           <button
             type="button"
             onClick={() => setModalAjustes(true)}
-            className="w-full flex items-center gap-3 px-3.5 py-2 rounded-xl text-[13px] font-medium text-gray-200 hover:bg-white/5 transition-colors cursor-pointer text-left"
+            className="w-full flex items-center gap-3 px-3.5 py-2 rounded-xl text-[13px] font-medium text-gray-200 hover:bg-white/10 transition-colors cursor-pointer text-left"
           >
             <Settings className="w-4 h-4 text-gray-300" />
             <span>{tr('configuracion')}</span>

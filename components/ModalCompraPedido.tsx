@@ -98,9 +98,13 @@ export default function ModalCompraPedido({
         });
         setValorUsd(cotStr);
         recalcularImporteUsd(importeActual, cotStr);
+      } else if (valorUsd) {
+        recalcularImporteUsd(importeActual, valorUsd);
       }
     } catch {
-      // Silencioso
+      if (valorUsd) {
+        recalcularImporteUsd(importeActual, valorUsd);
+      }
     } finally {
       setConsultandoBna(false);
     }
@@ -229,6 +233,29 @@ export default function ModalCompraPedido({
         setConcepto(extraido.conceptoSugerido);
       }
 
+      if (extraido.monedaDetectada) {
+        setMoneda(extraido.monedaDetectada);
+      }
+
+      // Autodetectar proveedor si su nombre figura en el PDF
+      if (extraido.textoCompleto && proveedores.length > 0) {
+        const textoLower = extraido.textoCompleto.toLowerCase();
+        const provMatch = proveedores.find((p) => {
+          const nombreClean = String(p.nombre || '')
+            .toLowerCase()
+            .replace(/\b(s\.?a\.?|s\.?r\.?l\.?|s\.?a\.?s\.?)\b/g, '')
+            .trim();
+          return nombreClean.length >= 4 && textoLower.includes(nombreClean);
+        });
+        if (provMatch) {
+          setProveedor(provMatch.nombre);
+        }
+      }
+
+      // Recalcular inmediatamente con la cotización ya cargada y luego actualizar desde BNA
+      if (valorUsd && nuevoImporte) {
+        recalcularImporteUsd(nuevoImporte, valorUsd);
+      }
       setMostrarMasDatos(true);
       await consultarDolarBna(nuevaFecha, nuevoImporte);
     }
@@ -369,7 +396,6 @@ export default function ModalCompraPedido({
         </div>
 
         <form onSubmit={guardarCompra} className="px-6 py-5 overflow-y-auto space-y-4">
-          {/* Proyecto + Proveedor */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div>
               <label className="block text-xs font-semibold text-gray-300 mb-1.5">
@@ -411,7 +437,6 @@ export default function ModalCompraPedido({
             </div>
           </div>
 
-          {/* Concepto */}
           <div>
             <label className="block text-xs font-semibold text-gray-300 mb-1.5">
               Concepto del Pedido *
@@ -426,7 +451,6 @@ export default function ModalCompraPedido({
             />
           </div>
 
-          {/* Moneda + Importe + Estado */}
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             <div>
               <label className="block text-xs font-semibold text-gray-300 mb-1.5">Moneda *</label>
@@ -470,7 +494,6 @@ export default function ModalCompraPedido({
             </div>
           </div>
 
-          {/* Fecha + Nro Orden/Factura + Tipo Comprobante */}
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             <div>
               <label className="block text-xs font-semibold text-gray-300 mb-1.5">Fecha</label>
@@ -516,7 +539,6 @@ export default function ModalCompraPedido({
             </div>
           </div>
 
-          {/* COMPROBANTE ADJUNTO (FACTURA) */}
           <div className="bg-[#141414] border border-gray-800 rounded-xl p-4 space-y-3">
             <div>
               <div className="text-sm font-bold text-white flex items-center gap-1.5">
@@ -606,7 +628,6 @@ export default function ModalCompraPedido({
             </div>
           </div>
 
-          {/* Más datos: Conversión ARS -> USD */}
           <div className="bg-[#141414] border border-gray-800 rounded-xl p-4 space-y-3">
             <button
               type="button"
@@ -684,7 +705,6 @@ export default function ModalCompraPedido({
             )}
           </div>
 
-          {/* Notas */}
           <div>
             <label className="block text-xs font-semibold text-gray-300 mb-1.5">
               Detalle / Notas de Entrega
@@ -698,7 +718,6 @@ export default function ModalCompraPedido({
             />
           </div>
 
-          {/* Botones del pie */}
           <div className="flex justify-between items-center pt-3 border-t border-gray-800/80">
             <div>
               {compraEditando && (

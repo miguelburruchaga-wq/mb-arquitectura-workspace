@@ -35,35 +35,34 @@ export default function TareasClient({
   tareasIniciales = [],
   proyectos = [],
   equipo = [],
+  proyectoFijoCodigo = '',
+  compacto = false,
 }: {
   tareasIniciales: any[];
   proyectos?: any[];
   equipo?: any[];
+  proyectoFijoCodigo?: string;
+  compacto?: boolean;
 }) {
   const router = useRouter();
 
-  // Vista activa: Lista | Tablero Kanban | Cronograma
   const [vista, setVista] = useState<'lista' | 'kanban' | 'cronograma'>('lista');
 
-  // Filtros
   const [filtroPill, setFiltroPill] = useState<
     'pendientes' | 'por_realizar' | 'en_curso' | 'atrasadas' | 'completadas'
   >('pendientes');
   const [busqueda, setBusqueda] = useState('');
-  const [filtroProyecto, setFiltroProyecto] = useState('Todos');
+  const [filtroProyecto, setFiltroProyecto] = useState(proyectoFijoCodigo || 'Todos');
   const [filtroResponsable, setFiltroResponsable] = useState('Todos');
   const [filtroPeriodo, setFiltroPeriodo] = useState('Todos');
   const [vistaRestringida, setVistaRestringida] = useState(false);
 
-  // Paginación de Lista
   const [pagina, setPagina] = useState(1);
   const [filasPorPagina, setFilasPorPagina] = useState(10);
 
-  // Cronograma
   const [escalaCrono, setEscalaCrono] = useState<'Semana' | 'Mes' | 'Trimestre' | 'Semestre' | 'Año'>('Semestre');
   const [offsetMeses, setOffsetMeses] = useState(0);
 
-  // Modal Tarea
   const [modalAbierto, setModalAbierto] = useState(false);
   const [tareaEditando, setTareaEditando] = useState<any | null>(null);
   const [toast, setToast] = useState<string | null>(null);
@@ -115,7 +114,11 @@ export default function TareasClient({
     await cambiarEstadoTarea(t.id, nuevo);
   };
 
-  // Contadores de pills superiores
+  const tareasBase = useMemo(() => {
+    if (!proyectoFijoCodigo) return tareasIniciales;
+    return tareasIniciales.filter((t) => t.proyecto_codigo === proyectoFijoCodigo);
+  }, [tareasIniciales, proyectoFijoCodigo]);
+
   const stats = useMemo(() => {
     let pendientes = 0;
     let porRealizar = 0;
@@ -123,7 +126,7 @@ export default function TareasClient({
     let atrasadas = 0;
     let completadas = 0;
 
-    for (const t of tareasIniciales) {
+    for (const t of tareasBase) {
       const est = normalizarEstado(t.estado);
       if (est === 'Finalizado') {
         completadas++;
@@ -135,18 +138,16 @@ export default function TareasClient({
       }
     }
     return { pendientes, porRealizar, enCurso, atrasadas, completadas };
-  }, [tareasIniciales]);
+  }, [tareasBase]);
 
-  // Filtrado general
   const tareasFiltradas = useMemo(() => {
     const hoy = new Date();
     const mesActual = `${hoy.getFullYear()}-${String(hoy.getMonth() + 1).padStart(2, '0')}`;
     const anioActual = String(hoy.getFullYear());
 
-    return tareasIniciales.filter((t) => {
+    return tareasBase.filter((t) => {
       const est = normalizarEstado(t.estado);
 
-      // En Kanban mostramos todas las columnas si está en "pendientes" para que se vean también completadas
       if (vista !== 'kanban') {
         if (filtroPill === 'pendientes' && est === 'Finalizado') return false;
         if (filtroPill === 'por_realizar' && est !== 'Por Realizar') return false;
@@ -170,8 +171,9 @@ export default function TareasClient({
         (t.rubro || '').toLowerCase().includes(q) ||
         (t.descripcion || '').toLowerCase().includes(q);
 
+      const proyectoActivo = proyectoFijoCodigo || filtroProyecto;
       const coincideProy =
-        filtroProyecto === 'Todos' || t.proyecto_codigo === filtroProyecto;
+        proyectoActivo === 'Todos' || t.proyecto_codigo === proyectoActivo;
 
       const coincideResp =
         filtroResponsable === 'Todos' || t.responsable === filtroResponsable;
@@ -187,7 +189,8 @@ export default function TareasClient({
       return coincideBusq && coincideProy && coincideResp && coincidePeriodo;
     });
   }, [
-    tareasIniciales,
+    tareasBase,
+    proyectoFijoCodigo,
     vista,
     filtroPill,
     busqueda,
@@ -196,7 +199,6 @@ export default function TareasClient({
     filtroPeriodo,
   ]);
 
-  // Paginación para Lista
   const totalPaginas = Math.max(1, Math.ceil(tareasFiltradas.length / filasPorPagina));
   const inicio = (pagina - 1) * filasPorPagina;
   const tareasPaginadas = tareasFiltradas.slice(inicio, inicio + filasPorPagina);
@@ -222,7 +224,7 @@ export default function TareasClient({
     a.click();
     URL.revokeObjectURL(url);
   };
-  // Cálculo de meses y días para el Cronograma
+
   const datosCronograma = useMemo(() => {
     const hoy = new Date();
     const cantidadMeses =
@@ -268,29 +270,52 @@ export default function TareasClient({
   }, [escalaCrono, offsetMeses]);
 
   return (
-    <div className="min-h-screen bg-[#121212] text-white p-8 font-sans">
+    <div className={compacto ? 'text-white font-sans' : 'min-h-screen bg-[#121212] text-white p-8 font-sans'}>
       {/* CABECERA */}
-      <div className="flex flex-wrap justify-between items-start gap-4 mb-5">
-        <div>
-          <h1 className="text-3xl font-extrabold text-white tracking-tight">
-            Tareas y Entregables
-          </h1>
-          <p className="text-sm text-gray-400 mt-1">
-            Planos, cómputos, pedidos de cotización y controles técnicos organizados por estado y fecha
-          </p>
-        </div>
+      {!compacto ? (
+        <div className="flex flex-wrap justify-between items-start gap-4 mb-5">
+          <div>
+            <h1 className="text-3xl font-extrabold text-white tracking-tight">
+              Tareas y Entregables
+            </h1>
+            <p className="text-sm text-gray-400 mt-1">
+              Planos, cómputos, pedidos de cotización y controles técnicos organizados por estado y fecha
+            </p>
+          </div>
 
-        <button
-          type="button"
-          onClick={() => {
-            setTareaEditando(null);
-            setModalAbierto(true);
-          }}
-          className="bg-[#EAB308] hover:bg-[#CA9A04] text-black px-5 py-2.5 rounded-xl font-bold text-sm flex items-center gap-2 transition-colors shadow-[0_0_20px_rgba(234,179,8,0.2)] cursor-pointer"
-        >
-          <Plus className="w-4 h-4 stroke-[2.5]" /> Nueva tarea
-        </button>
-      </div>
+          <button
+            type="button"
+            onClick={() => {
+              setTareaEditando(null);
+              setModalAbierto(true);
+            }}
+            className="bg-[#EAB308] hover:bg-[#CA9A04] text-black px-5 py-2.5 rounded-xl font-bold text-sm flex items-center gap-2 transition-colors shadow-[0_0_20px_rgba(234,179,8,0.2)] cursor-pointer"
+          >
+            <Plus className="w-4 h-4 stroke-[2.5]" /> Nueva tarea
+          </button>
+        </div>
+      ) : (
+        <div className="flex flex-wrap justify-between items-center gap-3 mb-4">
+          <div>
+            <h2 className="text-base font-bold text-white">
+              Planificación de Tareas y Cronograma ({tareasBase.length})
+            </h2>
+            <p className="text-xs text-gray-400">
+              Alterná entre Lista, Tablero Kanban o línea de tiempo del proyecto
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={() => {
+              setTareaEditando(null);
+              setModalAbierto(true);
+            }}
+            className="bg-[#EAB308] hover:bg-[#CA9A04] text-black px-4 py-2 rounded-xl font-bold text-xs inline-flex items-center gap-1.5 cursor-pointer"
+          >
+            <Plus className="w-3.5 h-3.5 stroke-[2.5]" /> Nueva tarea
+          </button>
+        </div>
+      )}
 
       {/* BARRA DE CAMBIO DE VISTA (Lista / Tablero Kanban / Cronograma) + ACCIONES */}
       <div className="flex flex-wrap justify-between items-center gap-4 mb-5">
@@ -333,16 +358,18 @@ export default function TareasClient({
         </div>
 
         <div className="flex items-center gap-2">
-          <button
-            type="button"
-            onClick={() => {
-              setTareaEditando(null);
-              setModalAbierto(true);
-            }}
-            className="bg-[#1A1A1A] hover:bg-gray-800 border border-gray-800 text-gray-300 hover:text-white px-3.5 py-2 rounded-xl text-xs font-medium inline-flex items-center gap-2 cursor-pointer"
-          >
-            <Upload className="w-3.5 h-3.5" /> Importar
-          </button>
+          {!compacto && (
+            <button
+              type="button"
+              onClick={() => {
+                setTareaEditando(null);
+                setModalAbierto(true);
+              }}
+              className="bg-[#1A1A1A] hover:bg-gray-800 border border-gray-800 text-gray-300 hover:text-white px-3.5 py-2 rounded-xl text-xs font-medium inline-flex items-center gap-2 cursor-pointer"
+            >
+              <Upload className="w-3.5 h-3.5" /> Importar
+            </button>
+          )}
           <button
             type="button"
             onClick={exportarCsv}
@@ -350,18 +377,22 @@ export default function TareasClient({
           >
             <Download className="w-3.5 h-3.5" /> Exportar
           </button>
-          <div className="w-px h-5 bg-gray-800" />
-          <button
-            type="button"
-            onClick={() => setVistaRestringida(!vistaRestringida)}
-            className={`border px-3.5 py-2 rounded-xl text-xs font-medium inline-flex items-center gap-2 cursor-pointer ${
-              vistaRestringida
-                ? 'bg-[#EAB308]/15 border-[#EAB308]/40 text-[#EAB308]'
-                : 'bg-[#1A1A1A] hover:bg-gray-800 border-gray-800 text-gray-300 hover:text-white'
-            }`}
-          >
-            <Lock className="w-3.5 h-3.5" /> Restringir vista
-          </button>
+          {!compacto && (
+            <>
+              <div className="w-px h-5 bg-gray-800" />
+              <button
+                type="button"
+                onClick={() => setVistaRestringida(!vistaRestringida)}
+                className={`border px-3.5 py-2 rounded-xl text-xs font-medium inline-flex items-center gap-2 cursor-pointer ${
+                  vistaRestringida
+                    ? 'bg-[#EAB308]/15 border-[#EAB308]/40 text-[#EAB308]'
+                    : 'bg-[#1A1A1A] hover:bg-gray-800 border-gray-800 text-gray-300 hover:text-white'
+                }`}
+              >
+                <Lock className="w-3.5 h-3.5" /> Restringir vista
+              </button>
+            </>
+          )}
         </div>
       </div>
 
@@ -419,26 +450,28 @@ export default function TareasClient({
                 setBusqueda(e.target.value);
                 setPagina(1);
               }}
-              placeholder="Buscar tarea por título, código de obra (OBR-2026), responsable o nota..."
+              placeholder="Buscar tarea por título, rubro, responsable o nota..."
               className="w-full bg-[#121212] border border-gray-800 rounded-xl pl-10 pr-4 py-2.5 text-sm text-white placeholder-gray-500"
             />
           </div>
 
-          <select
-            value={filtroProyecto}
-            onChange={(e) => {
-              setFiltroProyecto(e.target.value);
-              setPagina(1);
-            }}
-            className="bg-[#121212] border border-gray-800 rounded-xl px-3.5 py-2.5 text-xs font-medium text-gray-200"
-          >
-            <option value="Todos">Proyecto / Obra: Todos</option>
-            {proyectos.map((p) => (
-              <option key={p.codigo} value={p.codigo}>
-                {p.codigo} · {p.nombre}
-              </option>
-            ))}
-          </select>
+          {!proyectoFijoCodigo && (
+            <select
+              value={filtroProyecto}
+              onChange={(e) => {
+                setFiltroProyecto(e.target.value);
+                setPagina(1);
+              }}
+              className="bg-[#121212] border border-gray-800 rounded-xl px-3.5 py-2.5 text-xs font-medium text-gray-200"
+            >
+              <option value="Todos">Proyecto / Obra: Todos</option>
+              {proyectos.map((p) => (
+                <option key={p.codigo} value={p.codigo}>
+                  {p.codigo} · {p.nombre}
+                </option>
+              ))}
+            </select>
+          )}
 
           <select
             value={filtroResponsable}
@@ -479,9 +512,8 @@ export default function TareasClient({
           </span>
         </div>
       </div>
-      {/* ================================================================= */}
-      {/* VISTA 1: LISTA (TABLA + PAGINACIÓN)                               */}
-      {/* ================================================================= */}
+
+      {/* VISTA 1: LISTA */}
       {vista === 'lista' && (
         <div className="bg-[#1A1A1A] border border-gray-800 rounded-2xl p-5 shadow-xl">
           <h2 className="text-sm font-bold text-white mb-4">
@@ -493,7 +525,7 @@ export default function TareasClient({
               <thead>
                 <tr className="border-b border-gray-800 text-[11px] font-bold uppercase tracking-wider text-gray-400">
                   <th className="py-3 px-3">TAREA</th>
-                  <th className="py-3 px-3">PROYECTO</th>
+                  {!proyectoFijoCodigo && <th className="py-3 px-3">PROYECTO</th>}
                   <th className="py-3 px-3">RESPONSABLE</th>
                   <th className="py-3 px-3">VENCE</th>
                   <th className="py-3 px-3">PRIORIDAD</th>
@@ -504,7 +536,7 @@ export default function TareasClient({
               <tbody className="divide-y divide-gray-800/70 text-sm">
                 {tareasPaginadas.length === 0 ? (
                   <tr>
-                    <td colSpan={7} className="py-10 text-center text-gray-400 text-xs">
+                    <td colSpan={proyectoFijoCodigo ? 6 : 7} className="py-10 text-center text-gray-400 text-xs">
                       No se encontraron tareas para el filtro seleccionado.
                     </td>
                   </tr>
@@ -556,11 +588,13 @@ export default function TareasClient({
                           </div>
                         </td>
 
-                        <td className="py-4 px-3 text-xs font-semibold text-gray-200">
-                          {t.proyecto_codigo
-                            ? `${t.proyecto_codigo} · ${t.proyecto_nombre || ''}`
-                            : 'General'}
-                        </td>
+                        {!proyectoFijoCodigo && (
+                          <td className="py-4 px-3 text-xs font-semibold text-gray-200">
+                            {t.proyecto_codigo
+                              ? `${t.proyecto_codigo} · ${t.proyecto_nombre || ''}`
+                              : 'General'}
+                          </td>
+                        )}
 
                         <td className="py-4 px-3 text-xs text-gray-300">
                           {t.responsable || 'Sin asignar'}
@@ -626,7 +660,6 @@ export default function TareasClient({
             </table>
           </div>
 
-          {/* PAGINACIÓN */}
           <div className="mt-4 pt-4 border-t border-gray-800/80 flex flex-wrap justify-between items-center gap-4 text-xs text-gray-400">
             <div className="flex items-center gap-3">
               <span>
@@ -678,9 +711,7 @@ export default function TareasClient({
         </div>
       )}
 
-      {/* ================================================================= */}
-      {/* VISTA 2: TABLERO KANBAN (4 COLUMNAS)                              */}
-      {/* ================================================================= */}
+      {/* VISTA 2: TABLERO KANBAN */}
       {vista === 'kanban' && (
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
           {COLUMNAS_KANBAN.map((col, colIdx) => {
@@ -798,12 +829,9 @@ export default function TareasClient({
         </div>
       )}
 
-      {/* ================================================================= */}
-      {/* VISTA 3: CRONOGRAMA (LÍNEA DE TIEMPO)                             */}
-      {/* ================================================================= */}
+      {/* VISTA 3: CRONOGRAMA */}
       {vista === 'cronograma' && (
         <div className="bg-[#1A1A1A] border border-gray-800 rounded-2xl overflow-hidden shadow-xl">
-          {/* Cabecera del Cronograma */}
           <div className="px-5 py-4 border-b border-gray-800 flex flex-wrap justify-between items-center gap-3">
             <div className="inline-flex items-center gap-2 bg-[#121212] border border-gray-800 px-3.5 py-2 rounded-xl text-xs font-bold text-white">
               <RefreshCw className="w-3.5 h-3.5 text-[#EAB308]" /> Cronograma
@@ -860,10 +888,8 @@ export default function TareasClient({
             </div>
           </div>
 
-          {/* Grilla de meses y días */}
           <div className="overflow-x-auto">
             <div className="min-w-[900px] relative">
-              {/* Fila de meses */}
               <div
                 className="grid border-b border-gray-800 bg-[#161616]"
                 style={{ gridTemplateColumns: `repeat(${datosCronograma.meses.length}, minmax(0, 1fr))` }}
@@ -875,7 +901,6 @@ export default function TareasClient({
                 ))}
               </div>
 
-              {/* Fila de días */}
               <div
                 className="grid border-b border-gray-800 bg-[#121212]"
                 style={{ gridTemplateColumns: `repeat(${datosCronograma.meses.length}, minmax(0, 1fr))` }}
@@ -889,9 +914,7 @@ export default function TareasClient({
                 ))}
               </div>
 
-              {/* Área de barras de tareas + línea vertical de HOY */}
               <div className="relative min-h-[280px] p-4 space-y-3 bg-[#141414]">
-                {/* Línea vertical de Hoy */}
                 <div
                   className="absolute top-0 bottom-0 w-0.5 bg-rose-500 z-10 pointer-events-none"
                   style={{ left: `${datosCronograma.pctHoy}%` }}
@@ -973,6 +996,7 @@ export default function TareasClient({
         tareaEditando={tareaEditando}
         proyectos={proyectos}
         equipo={equipo}
+        proyectoFijoCodigo={proyectoFijoCodigo}
       />
 
       {toast && (

@@ -4,7 +4,7 @@ import { useState, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { supabase } from '@/lib/supabase';
 import { moverAPapelera } from '@/lib/papelera';
-import { X, Bell, Trash2 } from 'lucide-react';
+import { X, Bell, Trash2, Camera, Loader2 } from 'lucide-react';
 
 export const CATEGORIAS_VISITA = [
   'Visita de obra',
@@ -16,12 +16,64 @@ export const CATEGORIAS_VISITA = [
 
 export const ESTADOS_VISITA = ['Programada', 'Realizada', 'Cancelada'];
 
+export const ETIQUETAS_FOTO = ['Antes', 'En Obra', 'Final de Obra'] as const;
+
+export interface FotoVisita {
+  id: string;
+  url: string;
+  etiqueta: 'Antes' | 'En Obra' | 'Final de Obra';
+  nombre?: string;
+}
+
 const INTEGRANTES_DEFAULT = [
   'Alejandro Fego',
-  'Arq. Joana Cuevas',
-  'Lautaro Godoy',
+  'Arq. Ariel Gissi',
+  'Miguel Burruchaga',
   'Equipo MB',
 ];
+
+// Comprime cualquier foto de celular/cámara a máx 1400px y JPEG 80% antes de subirla
+async function comprimirImagenWeb(file: File): Promise<Blob> {
+  return new Promise((resolve) => {
+    const img = new Image();
+    const url = URL.createObjectURL(file);
+    img.onload = () => {
+      URL.revokeObjectURL(url);
+      const maxDim = 1400;
+      let { width, height } = img;
+      if (width > maxDim || height > maxDim) {
+        if (width > height) {
+          height = Math.round((height * maxDim) / width);
+          width = maxDim;
+        } else {
+          width = Math.round((width * maxDim) / height);
+          height = maxDim;
+        }
+      }
+      const canvas = document.createElement('canvas');
+      canvas.width = width;
+      canvas.height = height;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) {
+        resolve(file);
+        return;
+      }
+      ctx.drawImage(img, 0, 0, width, height);
+      canvas.toBlob(
+        (blob) => {
+          resolve(blob || file);
+        },
+        'image/jpeg',
+        0.8
+      );
+    };
+    img.onerror = () => {
+      URL.revokeObjectURL(url);
+      resolve(file);
+    };
+    img.src = url;
+  });
+}
 
 export default function ModalVisita({
   abierto,
@@ -42,6 +94,7 @@ export default function ModalVisita({
 }) {
   const [montado, setMontado] = useState(false);
   const [cargando, setCargando] = useState(false);
+  const [subiendoFotos, setSubiendoFotos] = useState(false);
 
   const hoyClave = new Date().toISOString().split('T')[0];
 
@@ -58,6 +111,10 @@ export default function ModalVisita({
   const [alarmaActiva, setAlarmaActiva] = useState(false);
   const [alarmaFecha, setAlarmaFecha] = useState(hoyClave);
   const [alarmaHorario, setAlarmaHorario] = useState('09:00');
+
+  // Bitácora fotográfica
+  const [fotos, setFotos] = useState<FotoVisita[]>([]);
+  const [etiquetaDefecto, setEtiquetaDefecto] = useState<'Antes' | 'En Obra' | 'Final de Obra'>('En Obra');
 
   useEffect(() => {
     setMontado(true);
@@ -84,6 +141,7 @@ export default function ModalVisita({
       setAlarmaActiva(Boolean(visitaEditando.alarma_activa));
       setAlarmaFecha(visitaEditando.alarma_fecha || visitaEditando.fecha || hoy);
       setAlarmaHorario(visitaEditando.alarma_horario || '09:00');
+      setFotos(Array.isArray(visitaEditando.fotos) ? visitaEditando.fotos : []);
     } else {
       setProyectoCodigo(proyectoFijoCodigo || proyectos[0]?.codigo || '');
       setCategoria('Visita de obra');
@@ -96,10 +154,77 @@ export default function ModalVisita({
       setAlarmaActiva(false);
       setAlarmaFecha(hoy);
       setAlarmaHorario('09:00');
+      setFotos([]);
     }
   }, [abierto, visitaEditando, proyectoFijoCodigo]);
 
   if (!abierto || !montado) return null;
+
+  const manejarSubidaFotos = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const archivos = Array.from(e.target.files || []);
+    if (archivos.length === 0) return;
+
+    setSubiendoFotos(true);
+    const nuevasFotos: FotoVisita[] = [];
+
+    for (const file of archivos) {
+      try {
+        const comprimido = await comprimirImagenWeb(file);
+        const nombreLimpio = file.name.replace(/\.[^.]+$/, '').replace(/\s+/g, '_');
+        const ruta = `${proyectoCodigo || 'general'}/${Date.now()}_${Math.random()
+          .toString(36)
+          .slice(2, 7)}_${nombreLimpio}.jpg`;
+
+        const { error: upErr } = await supabase.storage
+          .from('visitas')
+          .upload(ruta, comprimido, {
+            contentType: 'image/jpeg',
+            upsert: true,
+          });
+
+        if (!upErr) {
+          const { data: pub } = supabase.storage.from('visitas').getPublicUrl(ruta);
+          nuevasFotos.push({
+            id: `${Date.now()}-${Math.random()}`,
+            url: pub.publicUrl,
+            etiqueta: etiquetaDefecto,
+            nombre: file.name,
+          });
+        } else {
+          // Respaldo DataURL si el bucket aún no tiene permisos
+          const reader = new FileReader();
+          const dataUrl: string = await new Promise((res) => {
+            reader.onload = () => res(String(reader.result || ''));
+            reader.readAsDataURL(comprimido);
+          });
+          if (dataUrl) {
+            nuevasFotos.push({
+              id: `${Date.now()}-${Math.random()}`,
+              url: dataUrl,
+              etiqueta: etiquetaDefecto,
+              nombre: file.name,
+            });
+          }
+        }
+      } catch {
+        // Ignorar archivo corrupto
+      }
+    }
+
+    setFotos((prev) => [...prev, ...nuevasFotos]);
+    setSubiendoFotos(false);
+    e.target.value = '';
+  };
+
+  const cambiarEtiquetaFoto = (id: string, nuevaEtiqueta: 'Antes' | 'En Obra' | 'Final de Obra') => {
+    setFotos((prev) =>
+      prev.map((f) => (f.id === id ? { ...f, etiqueta: nuevaEtiqueta } : f))
+    );
+  };
+
+  const quitarFoto = (id: string) => {
+    setFotos((prev) => prev.filter((f) => f.id !== id));
+  };
 
   const guardarVisita = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -121,6 +246,7 @@ export default function ModalVisita({
       alarma_activa: alarmaActiva,
       alarma_fecha: alarmaActiva ? alarmaFecha : null,
       alarma_horario: alarmaActiva ? alarmaHorario : null,
+      fotos,
     };
 
     const { error } = visitaEditando
@@ -170,7 +296,7 @@ export default function ModalVisita({
               {visitaEditando ? 'Editar Visita / Reunión' : 'Agendar Nueva Visita / Reunión'}
             </h2>
             <p className="text-xs text-gray-400 mt-0.5">
-              Inspección de obra, reunión con cliente o coordinación de gremios
+              Inspección de obra, reunión con cliente, acta y registro fotográfico
             </p>
           </div>
           <button
@@ -290,6 +416,104 @@ export default function ModalVisita({
             </div>
           </div>
 
+          {/* REGISTRO FOTOGRÁFICO DE OBRA (ANTES / EN OBRA / FINAL DE OBRA) */}
+          <div className="bg-[#151515] border border-gray-800 rounded-xl p-4 space-y-3">
+            <div className="flex flex-wrap justify-between items-center gap-2">
+              <div className="flex items-center gap-2">
+                <Camera className="w-4 h-4 text-[#EAB308]" />
+                <div>
+                  <div className="text-xs font-bold text-white">
+                    Bitácora Fotográfica de Obra ({fotos.length})
+                  </div>
+                  <div className="text-[11px] text-gray-400">
+                    Se optimizan automáticamente antes de guardar en Supabase (bucket visitas)
+                  </div>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-2">
+                <select
+                  value={etiquetaDefecto}
+                  onChange={(e) => setEtiquetaDefecto(e.target.value as any)}
+                  className="bg-[#121212] border border-gray-700 rounded-lg px-2.5 py-1.5 text-xs font-semibold text-gray-200"
+                  title="Etiqueta para las próximas fotos que subas"
+                >
+                  {ETIQUETAS_FOTO.map((et) => (
+                    <option key={et} value={et}>
+                      Etiqueta: {et}
+                    </option>
+                  ))}
+                </select>
+
+                <label className="bg-[#EAB308]/15 hover:bg-[#EAB308]/25 border border-[#EAB308]/50 text-[#EAB308] px-3 py-1.5 rounded-lg text-xs font-bold inline-flex items-center gap-1.5 cursor-pointer">
+                  {subiendoFotos ? (
+                    <>
+                      <Loader2 className="w-3.5 h-3.5 animate-spin" /> Optimizando...
+                    </>
+                  ) : (
+                    <>
+                      <Camera className="w-3.5 h-3.5" /> + Agregar fotos
+                    </>
+                  )}
+                  <input
+                    type="file"
+                    accept="image/*"
+                    multiple
+                    disabled={subiendoFotos}
+                    onChange={manejarSubidaFotos}
+                    className="hidden"
+                  />
+                </label>
+              </div>
+            </div>
+
+            {fotos.length > 0 && (
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 pt-2">
+                {fotos.map((f) => (
+                  <div
+                    key={f.id}
+                    className="bg-[#121212] border border-gray-800 rounded-xl overflow-hidden flex flex-col"
+                  >
+                    <div className="relative h-28 bg-black">
+                      <img
+                        src={f.url}
+                        alt={f.etiqueta}
+                        className="w-full h-full object-cover"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => quitarFoto(f.id)}
+                        className="absolute top-1.5 right-1.5 p-1 rounded-lg bg-black/75 hover:bg-rose-600 text-white cursor-pointer"
+                        title="Eliminar foto"
+                      >
+                        <X className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                    <div className="p-2">
+                      <select
+                        value={f.etiqueta}
+                        onChange={(e) => cambiarEtiquetaFoto(f.id, e.target.value as any)}
+                        className={`w-full rounded-lg px-2 py-1 text-[11px] font-bold border cursor-pointer ${
+                          f.etiqueta === 'Antes'
+                            ? 'bg-gray-800 border-gray-700 text-gray-200'
+                            : f.etiqueta === 'Final de Obra'
+                            ? 'bg-emerald-950/80 border-emerald-700/60 text-emerald-400'
+                            : 'bg-amber-950/80 border-amber-700/60 text-[#EAB308]'
+                        }`}
+                      >
+                        {ETIQUETAS_FOTO.map((et) => (
+                          <option key={et} value={et}>
+                            {et}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
           {/* Alarma / Recordatorio */}
           <div className="bg-[#151515] border border-gray-800 rounded-xl p-4 space-y-3">
             <label className="flex items-center justify-between cursor-pointer">
@@ -383,7 +607,7 @@ export default function ModalVisita({
               </button>
               <button
                 type="submit"
-                disabled={cargando}
+                disabled={cargando || subiendoFotos}
                 className="bg-[#EAB308] hover:bg-[#CA9A04] text-black px-5 py-2.5 rounded-lg font-bold text-sm cursor-pointer disabled:opacity-50"
               >
                 {cargando

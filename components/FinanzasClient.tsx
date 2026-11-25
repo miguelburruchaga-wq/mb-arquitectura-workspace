@@ -6,6 +6,7 @@ import { useRouter } from 'next/navigation';
 import { supabase } from '@/lib/supabase';
 import { moverAPapelera } from '@/lib/papelera';
 import { extraerDatosFacturaPdf } from '@/lib/leerFacturaPdf';
+import CurvaInversion from '@/components/CurvaInversion';
 import {
   Plus,
   Search,
@@ -698,6 +699,15 @@ export default function FinanzasClient({
           </span>
         </div>
       </div>
+
+      {/* CURVA DE INVERSIÓN Y FLUJO DE CAJA */}
+      <CurvaInversion
+        movimientos={movimientosFiltrados}
+        moneda={monedaVista}
+        vistaRestringida={vistaRestringida}
+        titulo={`Curva de Inversión y Flujo de Caja (${monedaVista})`}
+        subtitulo="Evolución acumulada de honorarios cobrados, facturados y gastos en la moneda seleccionada"
+      />
 
       {/* BARRA DE BÚSQUEDA Y FILTROS */}
       <div className="bg-[#242424] border border-white/10 rounded-2xl p-4 mb-5 shadow-xl space-y-3">

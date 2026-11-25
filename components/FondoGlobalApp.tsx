@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { AparienciaEstudio, PORTADA_DEFAULT } from '@/components/ModalPersonalizarEstudio';
+import { usePreferencias } from '@/components/PreferenciasProvider';
 
 const DEFAULT_APARIENCIA: AparienciaEstudio = {
   portadaUrl: PORTADA_DEFAULT,
@@ -13,6 +14,7 @@ const DEFAULT_APARIENCIA: AparienciaEstudio = {
 };
 
 export default function FondoGlobalApp() {
+  const { modoPantalla } = usePreferencias();
   const [apariencia, setApariencia] = useState<AparienciaEstudio>(DEFAULT_APARIENCIA);
   const [fondoProcesado, setFondoProcesado] = useState<string>('');
 
@@ -42,8 +44,6 @@ export default function FondoGlobalApp() {
     };
   }, []);
 
-  // Pre-renderiza la imagen desenfocada y reducida UNA SOLA VEZ en memoria
-  // para evitar que la GPU recalcule filter: blur() en cada scroll o hover.
   useEffect(() => {
     if (!apariencia.fondoUrl || apariencia.rendimiento === 'liviano') {
       setFondoProcesado('');
@@ -62,7 +62,6 @@ export default function FondoGlobalApp() {
     img.onload = () => {
       if (cancelado) return;
       try {
-        // Reducimos resolución interna: al estar desenfocada no pierde calidad y pesa 10x menos
         const maxAncho = 960;
         const escala = Math.min(1, maxAncho / (img.width || maxAncho));
         const w = Math.max(1, Math.round(img.width * escala));
@@ -79,14 +78,12 @@ export default function FondoGlobalApp() {
 
         const blurAjustado = Math.max(1, Math.round(apariencia.desenfoque * escala));
         ctx.filter = `blur(${blurAjustado}px)`;
-        // Dibujamos ligeramente ampliado para evitar bordes transparentes del blur
         const margen = blurAjustado * 2;
         ctx.drawImage(img, -margen, -margen, w + margen * 2, h + margen * 2);
 
         const dataUrl = canvas.toDataURL('image/jpeg', 0.78);
         if (!cancelado) setFondoProcesado(dataUrl);
       } catch {
-        // Fallback si el servidor externo bloquea CORS en canvas
         if (!cancelado) setFondoProcesado(apariencia.fondoUrl);
       }
     };
@@ -110,21 +107,24 @@ export default function FondoGlobalApp() {
   return (
     <div
       aria-hidden="true"
-      className="fixed inset-0 pointer-events-none z-0 overflow-hidden select-none"
+      className="fixed inset-0 w-screen h-screen pointer-events-none z-0 overflow-hidden select-none"
       style={{ contain: 'strict' }}
     >
       <div
-        className="absolute inset-0 bg-cover bg-center will-change-transform"
+        className="w-full h-full bg-cover bg-center bg-no-repeat will-change-transform"
         style={{
           backgroundImage: `url(${fondoProcesado || apariencia.fondoUrl})`,
-          transform: 'translate3d(0, 0, 0) scale(1.03)',
+          transform: 'translate3d(0, 0, 0) scale(1.04)',
           filter: usaBlurCssFallback ? `blur(${apariencia.desenfoque}px)` : 'none',
         }}
       />
       <div
         className="absolute inset-0"
         style={{
-          backgroundColor: `rgba(18, 18, 18, ${apariencia.oscurecimiento / 100})`,
+          backgroundColor:
+            modoPantalla === 'claro'
+              ? `rgba(243, 244, 246, ${Math.min(0.88, Math.max(0.55, apariencia.oscurecimiento / 100))})`
+              : `rgba(18, 18, 18, ${apariencia.oscurecimiento / 100})`,
         }}
       />
     </div>

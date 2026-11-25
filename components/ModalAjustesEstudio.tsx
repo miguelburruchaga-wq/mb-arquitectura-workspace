@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { supabase } from '@/lib/supabase';
-import { usePreferencias, Idioma } from '@/components/PreferenciasProvider';
+import { usePreferencias, Idioma, Paleta } from '@/components/PreferenciasProvider';
 import {
   X,
   UserCheck,
@@ -19,6 +19,7 @@ import {
   Upload,
   Save,
   CheckCircle2,
+  Palette,
 } from 'lucide-react';
 
 const MONEDAS_DISPONIBLES = [
@@ -36,8 +37,8 @@ const ETAPAS_DEFAULT = [
   'Anteproyecto y Diseño',
   'Proyecto Ejecutivo y Detalles',
   'Presupuesto y Compras',
-  'Ejecución / Obra / Montaje',
-  'Entrega Final',
+  'Dirección y Ejecución de Obra',
+  'Entrega y Post-Obra',
 ];
 
 const TIPOLOGIAS_DEFAULT = [
@@ -49,6 +50,50 @@ const TIPOLOGIAS_DEFAULT = [
   'Edificio Residencial',
   'Mobiliario y Equipamiento',
   'Estación de Servicio',
+];
+
+const PALETAS_SISTEMA: {
+  id: Paleta;
+  nombre: string;
+  desc: string;
+  circulos: string[];
+}[] = [
+  {
+    id: 'volt',
+    nombre: 'Volt & Ébano',
+    desc: 'Ébano #141513, volt lima #D5FF40, piedra #C0C2B8 y blanco #FFFFFF.',
+    circulos: ['#141513', '#D5FF40', '#C0C2B8', '#FFFFFF'],
+  },
+  {
+    id: 'claridad',
+    nombre: 'Claridad y Acción',
+    desc: 'Carbón #202020, grafito #333533, amarillo #FFD100 y gris #D6D6D6.',
+    circulos: ['#202020', '#333533', '#FFD100', '#D6D6D6'],
+  },
+  {
+    id: 'esmeralda',
+    nombre: 'Esmeralda & Oro',
+    desc: 'Ámbar dorado #EBAE29, esmeralda #589C80, petróleo #132228 y marfil #F5EED2.',
+    circulos: ['#EBAE29', '#589C80', '#132228', '#F5EED2'],
+  },
+  {
+    id: 'borgona',
+    nombre: 'Borgoña & Coral',
+    desc: 'Borgoña #4C1D3D, rubí #A33757, coral #DC586D y durazno #FFBB94.',
+    circulos: ['#4C1D3D', '#A33757', '#DC586D', '#FFBB94'],
+  },
+  {
+    id: 'hormigon',
+    nombre: 'Hormigón & Cobre',
+    desc: 'Hormigón #1F2124, cobre #C86D44, acero #8E959E y arena #F4EFEA.',
+    circulos: ['#1F2124', '#C86D44', '#8E959E', '#F4EFEA'],
+  },
+  {
+    id: 'azulplano',
+    nombre: 'Azul Plano & Terracota',
+    desc: 'Azul noche #16202C, terracota #D96B43, pizarra #475569 y papel #F1F4F8.',
+    circulos: ['#16202C', '#D96B43', '#475569', '#F1F4F8'],
+  },
 ];
 
 const TEXTOS: Record<Idioma, Record<string, string>> = {
@@ -71,8 +116,9 @@ const TEXTOS: Record<Idioma, Record<string, string>> = {
     tamanoLetra: 'Tamaño de letra',
     letraStd: 'Letra Estándar',
     letraGrande: 'Letra Amplia de Lectura',
-    paleta: 'Paleta de colores del sistema',
-    activa: 'Activa',
+    paleta: 'Paleta del sistema',
+    enVivo: 'Aplicación en vivo',
+    activa: '✓ Activa',
     s4: '4. Etapas y tipologías de obra',
     etapasTitulo: 'Etapas de proyecto y obra',
     tipologiasTitulo: 'Tipologías de obra del estudio',
@@ -101,7 +147,8 @@ const TEXTOS: Record<Idioma, Record<string, string>> = {
     letraStd: 'Standard Font',
     letraGrande: 'Large Reading Font',
     paleta: 'System color palette',
-    activa: 'Active',
+    enVivo: 'Live preview',
+    activa: '✓ Active',
     s4: '4. Project stages & building types',
     etapasTitulo: 'Project & construction stages',
     tipologiasTitulo: 'Studio project typologies',
@@ -129,8 +176,9 @@ const TEXTOS: Record<Idioma, Record<string, string>> = {
     tamanoLetra: 'Tamanho da fonte',
     letraStd: 'Fonte Padrão',
     letraGrande: 'Fonte Ampla de Leitura',
-    paleta: 'Paleta de cores do sistema',
-    activa: 'Ativa',
+    paleta: 'Paleta do sistema',
+    enVivo: 'Aplicação ao vivo',
+    activa: '✓ Ativa',
     s4: '4. Etapas e tipologias de obra',
     etapasTitulo: 'Etapas de projeto e obra',
     tipologiasTitulo: 'Tipologias de obra do escritório',
@@ -329,6 +377,7 @@ export default function ModalAjustesEstudio({
     mostrarToast('Ajustes guardados correctamente');
     setTimeout(() => onClose(), 600);
   };
+
   return (
     <div
       onClick={onClose}
@@ -527,7 +576,7 @@ export default function ModalAjustesEstudio({
             </div>
           </section>
 
-          {/* 3. APARIENCIA Y LECTURA (SE APLICA AL INSTANTE) */}
+          {/* 3. APARIENCIA Y LECTURA (PALETA DEL SISTEMA EN VIVO) */}
           <section className="space-y-4">
             <h3 className="text-sm font-bold text-white pb-2 border-b border-gray-800/80">
               {t.s3}
@@ -544,7 +593,7 @@ export default function ModalAjustesEstudio({
                     onClick={() => setModoPantalla('claro')}
                     className={`py-2.5 rounded-xl border text-xs font-bold inline-flex items-center justify-center gap-2 cursor-pointer transition-all ${
                       modoPantalla === 'claro'
-                        ? 'bg-[#EAB308]/10 border-[#EAB308] text-white'
+                        ? 'bg-[#EAB308]/15 border-[#EAB308] text-white'
                         : 'bg-[#1A1A1A] border-gray-800 text-gray-400'
                     }`}
                   >
@@ -555,7 +604,7 @@ export default function ModalAjustesEstudio({
                     onClick={() => setModoPantalla('oscuro')}
                     className={`py-2.5 rounded-xl border text-xs font-bold inline-flex items-center justify-center gap-2 cursor-pointer transition-all ${
                       modoPantalla === 'oscuro'
-                        ? 'bg-[#EAB308]/10 border-[#EAB308] text-white'
+                        ? 'bg-[#EAB308]/15 border-[#EAB308] text-white'
                         : 'bg-[#1A1A1A] border-gray-800 text-gray-400'
                     }`}
                   >
@@ -575,7 +624,7 @@ export default function ModalAjustesEstudio({
                   }
                   className={`w-full py-2.5 rounded-xl border text-xs font-bold inline-flex items-center justify-center gap-2 cursor-pointer transition-all ${
                     tamanoLetra === 'grande'
-                      ? 'bg-[#EAB308]/10 border-[#EAB308] text-white'
+                      ? 'bg-[#EAB308]/15 border-[#EAB308] text-white'
                       : 'bg-[#1A1A1A] border-gray-800 text-white hover:border-gray-700'
                   }`}
                 >
@@ -585,56 +634,56 @@ export default function ModalAjustesEstudio({
               </div>
             </div>
 
-            <div>
-              <label className="block text-xs font-semibold text-gray-300 mb-2">{t.paleta}</label>
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                {[
-                  {
-                    id: 'clasica' as const,
-                    nombre: 'Clásica Claridad y Acción',
-                    desc: 'Blanco, Negro Carbón y Amarillo Ámbar',
-                    colores: ['bg-[#111827]', 'bg-[#EAB308]', 'bg-white'],
-                  },
-                  {
-                    id: 'pastel' as const,
-                    nombre: 'Estudio Pastel y Rosado',
-                    desc: 'Rosa pastel suave, coral empolvado y crema',
-                    colores: ['bg-pink-200', 'bg-rose-400', 'bg-stone-100'],
-                  },
-                  {
-                    id: 'madera' as const,
-                    nombre: 'Madera Nogal y Bronce',
-                    desc: 'Tono madera cálida, bronce caramelo y lino natural',
-                    colores: ['bg-amber-950', 'bg-amber-600', 'bg-amber-50'],
-                  },
-                ].map((p) => {
+            {/* PALETA DEL SISTEMA (6 PALETAS CON APLICACIÓN EN VIVO) */}
+            <div className="bg-[#1A1A1A] border border-gray-800 rounded-2xl p-4 space-y-3">
+              <div className="flex justify-between items-center">
+                <span className="text-xs font-bold text-white flex items-center gap-2">
+                  <Palette className="w-4 h-4 text-[#EAB308]" /> {t.paleta}
+                </span>
+                <span className="text-[11px] font-semibold text-gray-400">{t.enVivo}</span>
+              </div>
+
+              <div className="space-y-2.5">
+                {PALETAS_SISTEMA.map((p) => {
                   const activa = paleta === p.id;
                   return (
                     <button
                       key={p.id}
                       type="button"
                       onClick={() => setPaleta(p.id)}
-                      className={`p-4 rounded-xl border text-left cursor-pointer transition-all ${
+                      className={`w-full p-4 rounded-2xl border text-left cursor-pointer transition-all flex items-center justify-between gap-4 ${
                         activa
-                          ? 'bg-[#EAB308]/5 border-[#EAB308]'
-                          : 'bg-[#1A1A1A] border-gray-800 hover:border-gray-700'
+                          ? 'bg-[#EAB308]/15 border-[#EAB308] shadow-md'
+                          : 'bg-[#141414] border-gray-800 hover:border-gray-700'
                       }`}
                     >
-                      <div className="flex justify-between items-center mb-3">
-                        <div className="flex items-center gap-1.5">
-                          {p.colores.map((c, idx) => (
-                            <span
-                              key={idx}
-                              className={`w-5 h-5 rounded-full border border-gray-600 ${c}`}
-                            />
-                          ))}
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center gap-2.5 flex-wrap">
+                          <span
+                            className={`text-sm font-extrabold ${
+                              activa ? 'text-[#EAB308]' : 'text-white'
+                            }`}
+                          >
+                            {p.nombre}
+                          </span>
+                          {activa && (
+                            <span className="bg-[#EAB308] text-black px-2.5 py-0.5 rounded-lg text-[11px] font-extrabold">
+                              {t.activa}
+                            </span>
+                          )}
                         </div>
-                        {activa && (
-                          <span className="text-[11px] font-bold text-[#EAB308]">{t.activa}</span>
-                        )}
+                        <div className="text-xs text-gray-400 mt-1">{p.desc}</div>
                       </div>
-                      <div className="text-xs font-bold text-white">{p.nombre}</div>
-                      <div className="text-[11px] text-gray-400 mt-1">{p.desc}</div>
+
+                      <div className="flex items-center gap-1.5 flex-shrink-0">
+                        {p.circulos.map((hex, idx) => (
+                          <span
+                            key={idx}
+                            style={{ backgroundColor: hex }}
+                            className="w-6 h-6 rounded-full border border-white/25 shadow-sm"
+                          />
+                        ))}
+                      </div>
                     </button>
                   );
                 })}
@@ -648,7 +697,6 @@ export default function ModalAjustesEstudio({
               <Layers className="w-4 h-4 text-[#EAB308]" /> {t.s4}
             </h3>
 
-            {/* Etapas */}
             <div className="bg-[#1A1A1A] border border-gray-800 rounded-xl p-4 space-y-3">
               <div className="text-xs font-bold text-white">{t.etapasTitulo}</div>
               <div className="flex flex-wrap gap-2">
@@ -696,7 +744,6 @@ export default function ModalAjustesEstudio({
               </div>
             </div>
 
-            {/* Tipologías */}
             <div className="bg-[#1A1A1A] border border-gray-800 rounded-xl p-4 space-y-3">
               <div className="text-xs font-bold text-white flex items-center gap-1.5">
                 <Building2 className="w-3.5 h-3.5 text-[#EAB308]" /> {t.tipologiasTitulo}
