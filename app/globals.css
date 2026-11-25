@@ -125,21 +125,37 @@ html[data-theme="oscuro"] body {
   border-color: var(--accent) !important;
 }
 
-/* En Modo Claro, los botones principales grandes usan fondo oscuro elegante con texto acento/blanco */
+/* En Modo Claro, los botones principales usan el color de la paleta activa con texto e íconos oscuros legibles */
 html[data-theme="claro"] main button.bg-\[\#EAB308\],
+html[data-theme="claro"] main a.bg-\[\#EAB308\],
 html[data-theme="claro"] main span.bg-\[\#EAB308\] {
-  background-color: #18181B !important;
-  color: var(--accent) !important;
+  background-color: var(--accent, #D4EE36) !important;
+  color: var(--accent-fg, #111827) !important;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.08);
 }
 
-html[data-theme="claro"][data-paleta="borgona"] main button.bg-\[\#EAB308\],
-html[data-theme="claro"][data-paleta="hormigon"] main button.bg-\[\#EAB308\],
-html[data-theme="claro"][data-paleta="azulplano"] main button.bg-\[\#EAB308\],
-html[data-theme="claro"][data-paleta="borgona"] main span.bg-\[\#EAB308\],
-html[data-theme="claro"][data-paleta="hormigon"] main span.bg-\[\#EAB308\],
-html[data-theme="claro"][data-paleta="azulplano"] main span.bg-\[\#EAB308\] {
-  background-color: var(--accent) !important;
-  color: #FFFFFF !important;
+html[data-theme="claro"] main button.bg-\[\#EAB308\] *,
+html[data-theme="claro"] main a.bg-\[\#EAB308\] *,
+html[data-theme="claro"] main span.bg-\[\#EAB308\] * {
+  color: var(--accent-fg, #111827) !important;
+  stroke: var(--accent-fg, #111827) !important;
+}
+
+html[data-theme="claro"] main button.bg-\[\#EAB308\]:hover,
+html[data-theme="claro"] main a.bg-\[\#EAB308\]:hover {
+  background-color: var(--accent-hover, #C3DE22) !important;
+}
+
+html[data-theme="claro"] button.bg-\[\#EAB308\],
+html[data-theme="claro"] a.bg-\[\#EAB308\] {
+  background-color: var(--accent, #D4EE36) !important;
+  color: var(--accent-fg, #111827) !important;
+}
+
+html[data-theme="claro"] button.bg-\[\#EAB308\] *,
+html[data-theme="claro"] a.bg-\[\#EAB308\] * {
+  color: var(--accent-fg, #111827) !important;
+  stroke: var(--accent-fg, #111827) !important;
 }
 
 /* =========================================================================
@@ -405,4 +421,61 @@ html[data-theme="oscuro"][data-con-fondo="true"] header {
 table tbody tr,
 .grid > div {
   contain: layout style;
+}
+/* === BOTONES PRINCIPALES EN MODO CLARO (TEXTO E ÍCONOS NEGROS LEGIBLES) === */
+html[data-theme="claro"] button.bg-\[\#EAB308\],
+html[data-theme="claro"] a.bg-\[\#EAB308\],
+html[data-theme="claro"] span.bg-\[\#EAB308\],
+html[data-theme="claro"] main button.bg-\[\#EAB308\],
+html[data-theme="claro"] main a.bg-\[\#EAB308\],
+html[data-theme="claro"] main span.bg-\[\#EAB308\] {
+  background-color: var(--accent, #D4EE36) !important;
+  color: #111827 !important;
+  -webkit-text-fill-color: #111827 !important;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.08);
+}
+
+html[data-theme="claro"] button.bg-\[\#EAB308\] *,
+html[data-theme="claro"] a.bg-\[\#EAB308\] *,
+html[data-theme="claro"] span.bg-\[\#EAB308\] *,
+html[data-theme="claro"] main button.bg-\[\#EAB308\] *,
+html[data-theme="claro"] main a.bg-\[\#EAB308\] *,
+html[data-theme="claro"] main span.bg-\[\#EAB308\] * {
+  color: #111827 !important;
+  -webkit-text-fill-color: #111827 !important;
+  stroke: #111827 !important;
+}
+
+html[data-theme="claro"] button.bg-\[\#EAB308\]:hover,
+html[data-theme="claro"] a.bg-\[\#EAB308\]:hover,
+html[data-theme="claro"] main button.bg-\[\#EAB308\]:hover,
+html[data-theme="claro"] main a.bg-\[\#EAB308\]:hover {
+  background-color: var(--accent-hover, #C3DE22) !important;
+  color: #111827 !important;
+}
+/* === CONTRASTE LEGIBLE EN AVATARES DE USUARIOS DEL TOPBAR === */
+header .rounded-full.bg-\[\#181818\],
+header .rounded-full.bg-gray-900,
+header .rounded-full.bg-zinc-900,
+header .rounded-full.bg-neutral-900,
+header .rounded-full.bg-black {
+  background-color: #181818 !important;
+  color: #ffffff !important;
+  -webkit-text-fill-color: #ffffff !important;
+}
+
+header .rounded-full.bg-\[\#181818\] *,
+header .rounded-full.bg-gray-900 *,
+header .rounded-full.bg-zinc-900 *,
+header .rounded-full.bg-neutral-900 *,
+header .rounded-full.bg-black * {
+  color: #ffffff !important;
+  -webkit-text-fill-color: #ffffff !important;
+}
+
+html[data-theme="claro"] header .rounded-full.bg-white,
+html[data-theme="claro"] header .rounded-full.bg-gray-100,
+html[data-theme="claro"] header .rounded-full.bg-gray-200 {
+  color: #111827 !important;
+  -webkit-text-fill-color: #111827 !important;
 }

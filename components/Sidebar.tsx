@@ -1,218 +1,193 @@
 "use client";
 
-import { useState, useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import Link from 'next/link';
-import { usePathname } from 'next/navigation';
-import { usePreferencias } from '@/components/PreferenciasProvider';
-import { useAuth } from '@/components/AuthGate';
-import ModalAjustesEstudio from '@/components/ModalAjustesEstudio';
-import { obtenerCantidadPapelera } from '@/lib/papelera';
+import { usePathname, useRouter } from 'next/navigation';
+import { supabase } from '@/lib/supabase';
 import {
-  LayoutGrid,
+  LayoutDashboard,
   Users,
+  FileSpreadsheet,
   Compass,
   CheckSquare,
   Calendar,
   Truck,
   ShoppingCart,
   FileText,
-  BadgePercent,
+  CircleDollarSign,
   UserCheck,
   Trash2,
   Settings,
 } from 'lucide-react';
 
+const MENU_ITEMS = [
+  { href: '/', label: 'Dashboard', icon: LayoutDashboard },
+  { href: '/clientes', label: 'Clientes', icon: Users },
+  { href: '/presupuestos', label: 'Presupuestos', icon: FileSpreadsheet },
+  { href: '/proyectos', label: 'Proyectos', icon: Compass },
+  { href: '/tareas', label: 'Tareas', icon: CheckSquare },
+  { href: '/visitas', label: 'Visitas y Agenda', icon: Calendar },
+  { href: '/proveedores', label: 'Proveedores', icon: Truck },
+  { href: '/compras', label: 'Compras y Pedidos', icon: ShoppingCart },
+  { href: '/documentos', label: 'Documentos', icon: FileText },
+  { href: '/finanzas', label: 'Finanzas', icon: CircleDollarSign },
+  { href: '/equipo', label: 'Equipo', icon: UserCheck },
+];
+
 export default function Sidebar() {
   const pathname = usePathname();
-  const { tr } = usePreferencias();
-  const { usuario, cerrarSesion } = useAuth();
-
-  const [logoUrl, setLogoUrl] = useState('');
-  const [nombreEstudio, setNombreEstudio] = useState('MB Arquitectura SA');
-  const [modalAjustes, setModalAjustes] = useState(false);
+  const router = useRouter();
+  const [usuario, setUsuario] = useState<{
+    nombre: string;
+    rol: string;
+    foto_url?: string;
+    rol_sistema?: string;
+  }>({
+    nombre: 'Alejandro Fego',
+    rol: 'Director de Estudio',
+    rol_sistema: 'Titular',
+  });
   const [cantidadPapelera, setCantidadPapelera] = useState(0);
 
   useEffect(() => {
-    const actualizarPapelera = async () => {
-      const total = await obtenerCantidadPapelera();
-      setCantidadPapelera(total);
-    };
-    actualizarPapelera();
-    window.addEventListener('mb_papelera_updated', actualizarPapelera);
-    return () => window.removeEventListener('mb_papelera_updated', actualizarPapelera);
-  }, []);
-
-  useEffect(() => {
-    const leerDatosEstudio = () => {
-      try {
-        const rawAp = localStorage.getItem('mb_apariencia_estudio');
-        if (rawAp) {
-          const ap = JSON.parse(rawAp);
-          setLogoUrl(ap.logoUrl || '');
-        }
-        const nom = localStorage.getItem('mb_estudio_nombre');
-        if (nom) setNombreEstudio(nom);
-      } catch {
-        // Silencioso
+    try {
+      const saved = localStorage.getItem('mb_sesion_usuario');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (parsed?.nombre) setUsuario(parsed);
       }
+    } catch {
+      // Silencioso
+    }
+
+    const cargarPapelera = async () => {
+      const { count } = await supabase
+        .from('papelera')
+        .select('*', { count: 'exact', head: true });
+      if (typeof count === 'number') setCantidadPapelera(count);
     };
+    cargarPapelera();
+  }, [pathname]);
 
-    leerDatosEstudio();
-    window.addEventListener('mb_apariencia_updated', leerDatosEstudio);
-    window.addEventListener('storage', leerDatosEstudio);
-    return () => {
-      window.removeEventListener('mb_apariencia_updated', leerDatosEstudio);
-      window.removeEventListener('storage', leerDatosEstudio);
-    };
-  }, []);
+  const cerrarSesion = () => {
+    localStorage.removeItem('mb_sesion_usuario');
+    router.push('/login');
+  };
 
-  const items = [
-    { href: '/', label: tr('dashboard'), icon: LayoutGrid },
-    { href: '/clientes', label: tr('clientes'), icon: Users },
-    { href: '/proyectos', label: tr('proyectos'), icon: Compass },
-    { href: '/tareas', label: tr('tareas'), icon: CheckSquare },
-    { href: '/agenda', label: tr('visitas'), icon: Calendar },
-    { href: '/proveedores', label: tr('proveedores'), icon: Truck },
-    { href: '/compras', label: tr('compras'), icon: ShoppingCart },
-    { href: '/documentos', label: tr('documentos'), icon: FileText },
-    { href: '/finanzas', label: tr('finanzas'), icon: BadgePercent },
-    { href: '/equipo', label: tr('equipo'), icon: UserCheck },
-  ];
+  if (pathname === '/login') return null;
 
-  const nombreMostrar = usuario?.nombre || 'Alejandro Fego';
-  const esTitular =
-    String(usuario?.tipo_acceso || '').toLowerCase().includes('titular') ||
-    usuario?.email === 'alejandrofego1986@gmail.com';
-  const badgeRol = esTitular
-    ? tr('titular').toUpperCase()
-    : (usuario?.tipo_acceso || 'INVITADO').toUpperCase();
+  const iniciales = usuario.nombre
+    .replace(/^Arq\.\s*/i, '')
+    .split(' ')
+    .map((p) => p[0])
+    .join('')
+    .slice(0, 2)
+    .toUpperCase();
 
   return (
-    <>
-      <aside className="sidebar-estudio w-60 sticky top-3 h-[calc(100vh-1.5rem)] my-3 ml-3 rounded-3xl bg-[#23272A] border border-white/10 flex flex-col justify-between flex-shrink-0 z-30 shadow-2xl overflow-hidden transition-colors">
-        {/* PARTE SUPERIOR + NAVEGACIÓN */}
-        <div className="flex-1 overflow-y-auto">
-          <div className="px-5 pt-5 pb-4 border-b border-white/10">
-            <Link href="/" className="flex items-center gap-3">
-              {logoUrl ? (
-                <img
-                  src={logoUrl}
-                  alt="Logo"
-                  className="w-10 h-10 rounded-xl object-cover bg-white shadow flex-shrink-0"
-                />
-              ) : (
-                <div className="w-10 h-10 rounded-xl bg-white text-black font-black text-sm flex items-center justify-center shadow flex-shrink-0">
-                  MB
-                </div>
-              )}
-              <div>
-                <div className="text-sm font-extrabold text-white leading-none tracking-wide">
-                  ARQUITECTOS
-                </div>
-                <div className="text-[10px] font-semibold text-gray-400 tracking-widest mt-1.5">
-                  | WORKSPACE
-                </div>
-              </div>
-            </Link>
+    <aside className="w-64 bg-[#111111] border-r border-white/10 min-h-screen flex flex-col justify-between p-4 flex-shrink-0 select-none">
+      <div>
+        <div className="flex items-center gap-3 px-2 py-3 mb-6">
+          <div className="w-10 h-10 rounded-xl bg-white text-black font-black text-base flex items-center justify-center shadow">
+            MB
           </div>
-
-          <nav className="p-3.5 space-y-1">
-            {items.map((item) => {
-              const Icon = item.icon;
-              const activo =
-                item.href === '/' ? pathname === '/' : pathname.startsWith(item.href);
-
-              return (
-                <Link
-                  key={item.href}
-                  href={item.href}
-                  className={`flex items-center gap-3.5 px-4 py-2.5 rounded-2xl text-[13px] transition-all ${
-                    activo
-                      ? 'bg-[#EAB308] text-black font-bold shadow-md'
-                      : 'text-gray-200 font-medium hover:bg-white/10 hover:text-white'
-                  }`}
-                >
-                  <Icon className="w-4 h-4 flex-shrink-0 stroke-[1.9]" />
-                  <span className="truncate">{item.label}</span>
-                </Link>
-              );
-            })}
-          </nav>
+          <div>
+            <div className="text-sm font-extrabold tracking-wide text-white leading-tight">
+              ARQUITECTOS
+            </div>
+            <div className="text-[10px] tracking-[0.2em] text-gray-400 font-semibold">
+              WORKSPACE
+            </div>
+          </div>
         </div>
 
-        {/* PIE FIJO DEL MENÚ */}
-        <div className="sidebar-footer bg-[#1D2023] border-t border-white/10 p-3.5 space-y-1 flex-shrink-0">
-          <Link
-            href="/papelera"
-            className="flex items-center justify-between px-3.5 py-2 rounded-xl text-[13px] font-medium text-gray-200 hover:bg-white/10 transition-colors"
-          >
-            <span className="inline-flex items-center gap-3">
-              <Trash2 className="w-4 h-4 text-gray-300" />
-              <span>{tr('papelera')}</span>
-            </span>
-            <span className="w-5 h-5 rounded-full bg-rose-950/90 border border-rose-800/60 text-rose-400 text-[10px] font-extrabold flex items-center justify-center">
+        <nav className="space-y-1">
+          {MENU_ITEMS.map((item) => {
+            const Icon = item.icon;
+            const activo =
+              item.href === '/' ? pathname === '/' : pathname.startsWith(item.href);
+
+            return (
+              <Link
+                key={item.href}
+                href={item.href}
+                className={`flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-xs font-bold transition-all ${
+                  activo
+                    ? 'bg-[#D4EE36] text-black shadow-md'
+                    : 'text-gray-300 hover:text-white hover:bg-white/5'
+                }`}
+              >
+                <Icon className="w-4 h-4 flex-shrink-0" />
+                <span>{item.label}</span>
+              </Link>
+            );
+          })}
+        </nav>
+      </div>
+
+      <div className="pt-4 border-t border-white/10 space-y-2">
+        <Link
+          href="/papelera"
+          className={`flex items-center justify-between px-3.5 py-2 rounded-xl text-xs font-semibold transition-colors ${
+            pathname.startsWith('/papelera')
+              ? 'bg-white/10 text-white'
+              : 'text-gray-400 hover:text-white hover:bg-white/5'
+          }`}
+        >
+          <span className="inline-flex items-center gap-2.5">
+            <Trash2 className="w-4 h-4" /> Papelera
+          </span>
+          {cantidadPapelera > 0 && (
+            <span className="bg-rose-600 text-white text-[10px] font-extrabold px-2 py-0.5 rounded-full">
               {cantidadPapelera}
             </span>
-          </Link>
+          )}
+        </Link>
+
+        <Link
+          href="/configuracion"
+          className={`flex items-center gap-2.5 px-3.5 py-2 rounded-xl text-xs font-semibold transition-colors ${
+            pathname.startsWith('/configuracion')
+              ? 'bg-white/10 text-white'
+              : 'text-gray-400 hover:text-white hover:bg-white/5'
+          }`}
+        >
+          <Settings className="w-4 h-4" /> Configuración
+        </Link>
+
+        <div className="bg-[#181818] border border-white/10 rounded-xl p-2.5 flex items-center justify-between gap-2 mt-2">
+          <div className="flex items-center gap-2.5 min-w-0">
+            {usuario.foto_url ? (
+              <img
+                src={usuario.foto_url}
+                alt={usuario.nombre}
+                className="w-8 h-8 rounded-full object-cover flex-shrink-0"
+              />
+            ) : (
+              <div className="w-8 h-8 rounded-full bg-gray-800 text-[#D4EE36] font-extrabold text-xs flex items-center justify-center flex-shrink-0">
+                {iniciales}
+              </div>
+            )}
+            <div className="min-w-0">
+              <div className="flex items-center gap-1.5">
+                <span className="text-xs font-bold text-white truncate">{usuario.nombre}</span>
+                <span className="bg-[#EAB308] text-black text-[9px] font-extrabold px-1.5 py-0.2 rounded">
+                  TITULAR
+                </span>
+              </div>
+              <div className="text-[10px] text-gray-400 truncate">MB Arquitectura SA</div>
+            </div>
+          </div>
 
           <button
             type="button"
-            onClick={() => setModalAjustes(true)}
-            className="w-full flex items-center gap-3 px-3.5 py-2 rounded-xl text-[13px] font-medium text-gray-200 hover:bg-white/10 transition-colors cursor-pointer text-left"
+            onClick={cerrarSesion}
+            className="text-[11px] font-bold text-gray-400 hover:text-white cursor-pointer flex-shrink-0"
           >
-            <Settings className="w-4 h-4 text-gray-300" />
-            <span>{tr('configuracion')}</span>
+            Salir
           </button>
-
-          {/* TARJETA DE QUIÉN INICIÓ SESIÓN */}
-          <div className="pt-3 mt-2 border-t border-white/10 flex items-center justify-between gap-2 px-1.5">
-            <button
-              type="button"
-              onClick={() => setModalAjustes(true)}
-              title={`${nombreMostrar} (${usuario?.email || ''})`}
-              className="flex items-center gap-2.5 min-w-0 text-left cursor-pointer group"
-            >
-              {usuario?.foto_url || logoUrl ? (
-                <img
-                  src={usuario?.foto_url || logoUrl}
-                  alt={nombreMostrar}
-                  className="w-9 h-9 rounded-full object-cover bg-white flex-shrink-0"
-                />
-              ) : (
-                <div className="w-9 h-9 rounded-full bg-white text-black font-black text-xs flex items-center justify-center flex-shrink-0">
-                  MB
-                </div>
-              )}
-              <div className="min-w-0">
-                <div className="flex items-center gap-1.5">
-                  <span className="text-xs font-bold text-white group-hover:text-[#EAB308] truncate transition-colors">
-                    {nombreMostrar}
-                  </span>
-                  <span className="px-1.5 py-0.5 rounded bg-[#EAB308]/20 border border-[#EAB308]/30 text-[#EAB308] text-[9px] font-extrabold tracking-wide flex-shrink-0">
-                    {badgeRol}
-                  </span>
-                </div>
-                <div className="text-[11px] text-gray-400 truncate mt-0.5">
-                  {nombreEstudio}
-                </div>
-              </div>
-            </button>
-
-            <button
-              type="button"
-              onClick={cerrarSesion}
-              className="text-xs font-bold text-gray-300 hover:text-white cursor-pointer flex-shrink-0"
-            >
-              {tr('salir')}
-            </button>
-          </div>
         </div>
-      </aside>
-
-      <ModalAjustesEstudio
-        abierto={modalAjustes}
-        onClose={() => setModalAjustes(false)}
-      />
-    </>
+      </div>
+    </aside>
   );
 }

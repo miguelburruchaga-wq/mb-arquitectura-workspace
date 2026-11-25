@@ -1,17 +1,38 @@
 "use client";
 
 import { useState, useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import { supabase } from '@/lib/supabase';
 import { moverAPapelera } from '@/lib/papelera';
-import { extraerDatosFacturaPdf } from '@/lib/leerFacturaPdf';
-import {
-  ShoppingCart,
-  X,
-  Upload,
-  RefreshCw,
-  Loader2,
-  Trash2,
-} from 'lucide-react';
+import { X, Upload, Link2, Trash2, Loader2, Plus, Package } from 'lucide-react';
+
+export interface ItemMaterialCompra {
+  id: number;
+  material: string;
+  cantidad: string;
+  unidad: string;
+  estado: 'Encargado' | 'En tránsito' | 'Entregado' | 'Pendiente';
+}
+
+function formatearMilesDecimales(valorCrudo: string): string {
+  const limpio = valorCrudo.replace(/[^\d,]/g, '');
+  if (!limpio) return '';
+  const partes = limpio.split(',');
+  const enteros = partes[0].replace(/^0+(?=\d)/, '');
+  const conPuntos = enteros.replace(/\B(?=(\d{3})+(?!\d))/g, '.');
+  if (partes.length > 1) return `${conPuntos || '0'},${partes[1].slice(0, 2)}`;
+  return conPuntos;
+}
+
+function parsearNum(valor: string | number): number {
+  if (typeof valor === 'number') return valor;
+  const s = String(valor || '').trim();
+  if (!s) return 0;
+  if (s.includes(',')) return parseFloat(s.replace(/\./g, '').replace(',', '.')) || 0;
+  const puntos = (s.match(/\./g) || []).length;
+  if (puntos > 1) return parseFloat(s.replace(/\./g, '')) || 0;
+  return parseFloat(s) || 0;
+}
 
 export default function ModalCompraPedido({
   abierto,
@@ -30,330 +51,169 @@ export default function ModalCompraPedido({
   proveedores?: any[];
   proyectoFijoCodigo?: string;
 }) {
+  const [montado, setMontado] = useState(false);
   const [cargando, setCargando] = useState(false);
   const [subiendoArchivo, setSubiendoArchivo] = useState(false);
-  const [leyendoPdf, setLeyendoPdf] = useState(false);
-  const [consultandoBna, setConsultandoBna] = useState(false);
+
+  const hoy = new Date().toISOString().split('T')[0];
 
   const [proyectoCodigo, setProyectoCodigo] = useState(
     proyectoFijoCodigo || proyectos[0]?.codigo || ''
   );
-  const [proveedor, setProveedor] = useState(proveedores[0]?.nombre || '');
+  const [proveedor, setProveedor] = useState('');
   const [concepto, setConcepto] = useState('');
-  const [moneda, setMoneda] = useState<'ARS' | 'USD'>('ARS');
-  const [importe, setImporte] = useState('');
-  const [estado, setEstado] = useState('Encargado');
-  const [fecha, setFecha] = useState(() => new Date().toISOString().split('T')[0]);
   const [nroOrden, setNroOrden] = useState('');
-  const [tipoComprobante, setTipoComprobante] = useState('Factura');
+  const [fecha, setFecha] = useState(hoy);
+  const [moneda, setMoneda] = useState<'ARS' | 'USD'>('ARS');
+  const [importeTexto, setImporteTexto] = useState('');
+  const [valorUsdTexto, setValorUsdTexto] = useState('1.450');
+  const [estado, setEstado] = useState('Entregado');
   const [archivoUrl, setArchivoUrl] = useState('');
-  const [archivoNombre, setArchivoNombre] = useState('');
-  const [enlaceExterno, setEnlaceExterno] = useState('');
-  const [enlaceNombre, setEnlaceNombre] = useState('');
-  const [notas, setNotas] = useState('');
 
-  const [mostrarMasDatos, setMostrarMasDatos] = useState(true);
-  const [fechaConversion, setFechaConversion] = useState(
-    () => new Date().toISOString().split('T')[0]
-  );
-  const [valorUsd, setValorUsd] = useState('');
-  const [importeUsd, setImporteUsd] = useState('');
+  // Lista de materiales y cantidades del pedido
+  const [itemsMateriales, setItemsMateriales] = useState<ItemMaterialCompra[]>([]);
 
-  const parsearNumero = (val: string) => {
-    if (!val) return 0;
-    const limpio = String(val).replace(/\./g, '').replace(',', '.').replace(/[^0-9.-]/g, '');
-    const num = parseFloat(limpio);
-    return isNaN(num) ? 0 : num;
-  };
-
-  const formatearMiles = (val: string) => {
-    const soloDigitos = val.replace(/\D/g, '');
-    if (!soloDigitos) return '';
-    return Number(soloDigitos).toLocaleString('es-AR');
-  };
-
-  const recalcularImporteUsd = (impStr: string, cotStr: string) => {
-    const imp = parsearNumero(impStr);
-    const cot = parsearNumero(cotStr);
-    if (imp > 0 && cot > 0) {
-      const res = imp / cot;
-      setImporteUsd(
-        res.toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
-      );
-    } else {
-      setImporteUsd('');
-    }
-  };
-
-  const consultarDolarBna = async (fechaTarget: string, importeActual: string) => {
-    if (!fechaTarget) return;
-    setConsultandoBna(true);
-    try {
-      const res = await fetch(`/api/dolar-bna?fecha=${fechaTarget}`);
-      const data = await res.json();
-      if (data?.valor) {
-        const cotStr = Number(data.valor).toLocaleString('es-AR', {
-          minimumFractionDigits: data.valor % 1 === 0 ? 0 : 2,
-          maximumFractionDigits: 2,
-        });
-        setValorUsd(cotStr);
-        recalcularImporteUsd(importeActual, cotStr);
-      } else if (valorUsd) {
-        recalcularImporteUsd(importeActual, valorUsd);
-      }
-    } catch {
-      if (valorUsd) {
-        recalcularImporteUsd(importeActual, valorUsd);
-      }
-    } finally {
-      setConsultandoBna(false);
-    }
-  };
+  useEffect(() => {
+    setMontado(true);
+  }, []);
 
   useEffect(() => {
     if (!abierto) return;
-    const hoy = new Date().toISOString().split('T')[0];
+    const hoyIso = new Date().toISOString().split('T')[0];
 
     if (compraEditando) {
-      setProyectoCodigo(
-        compraEditando.proyecto_codigo || proyectoFijoCodigo || proyectos[0]?.codigo || ''
-      );
-      setProveedor(
-        compraEditando.proveedor || (proveedores.length > 0 ? proveedores[0].nombre : '')
-      );
+      setProyectoCodigo(compraEditando.proyecto_codigo || proyectoFijoCodigo || '');
+      setProveedor(compraEditando.proveedor || '');
       setConcepto(compraEditando.concepto || '');
-      setMoneda(compraEditando.moneda === 'USD' ? 'USD' : 'ARS');
-      setImporte(
-        compraEditando.importe
-          ? Number(compraEditando.importe).toLocaleString('es-AR', {
-              minimumFractionDigits: Number(compraEditando.importe) % 1 === 0 ? 0 : 2,
-              maximumFractionDigits: 2,
-            })
-          : ''
-      );
-      setEstado(compraEditando.estado || 'Encargado');
-      setFecha(compraEditando.fecha || hoy);
       setNroOrden(compraEditando.nro_orden || '');
-      setTipoComprobante(compraEditando.tipo_comprobante || 'Factura');
-      setArchivoUrl(compraEditando.archivo_url || '');
-      setArchivoNombre(compraEditando.archivo_nombre || '');
-      setEnlaceExterno(compraEditando.enlace_externo || '');
-      setEnlaceNombre(compraEditando.enlace_nombre || '');
-      setNotas(compraEditando.notas || '');
-      setMostrarMasDatos(true);
-      setFechaConversion(compraEditando.fecha_conversion || compraEditando.fecha || hoy);
-      setValorUsd(
-        compraEditando.valor_usd
-          ? Number(compraEditando.valor_usd).toLocaleString('es-AR', {
-              minimumFractionDigits: Number(compraEditando.valor_usd) % 1 === 0 ? 0 : 2,
+      setFecha(compraEditando.fecha || hoyIso);
+      setMoneda(String(compraEditando.moneda || 'ARS').toUpperCase() === 'USD' ? 'USD' : 'ARS');
+      const imp = Number(compraEditando.importe || 0);
+      setImporteTexto(
+        imp > 0
+          ? imp.toLocaleString('es-AR', {
+              minimumFractionDigits: imp % 1 === 0 ? 0 : 2,
               maximumFractionDigits: 2,
             })
           : ''
       );
-      setImporteUsd(
-        compraEditando.importe_usd
-          ? Number(compraEditando.importe_usd).toLocaleString('es-AR', {
-              minimumFractionDigits: 2,
-              maximumFractionDigits: 2,
-            })
-          : ''
+      const cot = Number(compraEditando.valor_usd || 1450);
+      setValorUsdTexto(
+        cot.toLocaleString('es-AR', {
+          minimumFractionDigits: cot % 1 === 0 ? 0 : 2,
+          maximumFractionDigits: 2,
+        })
+      );
+      setEstado(compraEditando.estado || 'Entregado');
+      setArchivoUrl(compraEditando.archivo_url || '');
+      setItemsMateriales(
+        Array.isArray(compraEditando.items_materiales) ? compraEditando.items_materiales : []
       );
     } else {
       setProyectoCodigo(proyectoFijoCodigo || proyectos[0]?.codigo || '');
-      setProveedor(proveedores.length > 0 ? proveedores[0].nombre : '');
+      setProveedor(proveedores[0]?.nombre || '');
       setConcepto('');
-      setMoneda('ARS');
-      setImporte('');
-      setEstado('Encargado');
-      setFecha(hoy);
       setNroOrden('');
-      setTipoComprobante('Factura');
+      setFecha(hoyIso);
+      setMoneda('ARS');
+      setImporteTexto('');
+      setValorUsdTexto('1.450');
+      setEstado('Entregado');
       setArchivoUrl('');
-      setArchivoNombre('');
-      setEnlaceExterno('');
-      setEnlaceNombre('');
-      setNotas('');
-      setMostrarMasDatos(true);
-      setFechaConversion(hoy);
-      setValorUsd('');
-      setImporteUsd('');
-      consultarDolarBna(hoy, '');
+      setItemsMateriales([]);
     }
   }, [abierto, compraEditando, proyectoFijoCodigo]);
 
-  if (!abierto) return null;
+  if (!abierto || !montado) return null;
 
-  const manejarAdjunto = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const archivo = e.target.files?.[0];
-    if (!archivo) return;
+  const agregarMaterial = () => {
+    setItemsMateriales((prev) => [
+      ...prev,
+      {
+        id: Date.now() + Math.random(),
+        material: '',
+        cantidad: '1',
+        unidad: 'un.',
+        estado: 'Entregado',
+      },
+    ]);
+  };
 
+  const actualizarMaterial = (id: number, campo: keyof ItemMaterialCompra, valor: string) => {
+    setItemsMateriales((prev) =>
+      prev.map((item) => (item.id === id ? { ...item, [campo]: valor } : item))
+    );
+  };
+
+  const quitarMaterial = (id: number) => {
+    setItemsMateriales((prev) => prev.filter((item) => item.id !== id));
+  };
+
+  const subirArchivo = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
     setSubiendoArchivo(true);
-    setArchivoNombre(archivo.name);
-
     try {
-      const ruta = `compras/${Date.now()}_${archivo.name.replace(/\s+/g, '_')}`;
-      const { error: upErr } = await supabase.storage
-        .from('comprobantes')
-        .upload(ruta, archivo, { upsert: true });
-
-      if (!upErr) {
-        const { data: pub } = supabase.storage.from('comprobantes').getPublicUrl(ruta);
-        setArchivoUrl(pub.publicUrl);
+      const ruta = `compras/${Date.now()}_${file.name.replace(/\s+/g, '_')}`;
+      const { error } = await supabase.storage
+        .from('documentos')
+        .upload(ruta, file, { upsert: true });
+      if (!error) {
+        const { data } = supabase.storage.from('documentos').getPublicUrl(ruta);
+        setArchivoUrl(data.publicUrl);
       } else {
         const reader = new FileReader();
         reader.onload = () => setArchivoUrl(String(reader.result || ''));
-        reader.readAsDataURL(archivo);
+        reader.readAsDataURL(file);
       }
-    } catch {
-      const reader = new FileReader();
-      reader.onload = () => setArchivoUrl(String(reader.result || ''));
-      reader.readAsDataURL(archivo);
     } finally {
       setSubiendoArchivo(false);
-    }
-
-    if (archivo.type === 'application/pdf' || archivo.name.toLowerCase().endsWith('.pdf')) {
-      setImporte('');
-      setNroOrden('');
-      setImporteUsd('');
-      setLeyendoPdf(true);
-      const extraido = await extraerDatosFacturaPdf(archivo);
-      setLeyendoPdf(false);
-
-      const nuevoImporte = extraido.importe || '';
-      const nuevaFecha = extraido.fechaDetectada || fecha;
-
-      setImporte(nuevoImporte);
-      setNroOrden(extraido.nroFactura || '');
-      if (extraido.fechaDetectada) {
-        setFecha(extraido.fechaDetectada);
-        setFechaConversion(extraido.fechaDetectada);
-      }
-      if (!concepto.trim() && extraido.conceptoSugerido) {
-        setConcepto(extraido.conceptoSugerido);
-      }
-
-      if (extraido.monedaDetectada) {
-        setMoneda(extraido.monedaDetectada);
-      }
-
-      // Autodetectar proveedor si su nombre figura en el PDF
-      if (extraido.textoCompleto && proveedores.length > 0) {
-        const textoLower = extraido.textoCompleto.toLowerCase();
-        const provMatch = proveedores.find((p) => {
-          const nombreClean = String(p.nombre || '')
-            .toLowerCase()
-            .replace(/\b(s\.?a\.?|s\.?r\.?l\.?|s\.?a\.?s\.?)\b/g, '')
-            .trim();
-          return nombreClean.length >= 4 && textoLower.includes(nombreClean);
-        });
-        if (provMatch) {
-          setProveedor(provMatch.nombre);
-        }
-      }
-
-      // Recalcular inmediatamente con la cotización ya cargada y luego actualizar desde BNA
-      if (valorUsd && nuevoImporte) {
-        recalcularImporteUsd(nuevoImporte, valorUsd);
-      }
-      setMostrarMasDatos(true);
-      await consultarDolarBna(nuevaFecha, nuevoImporte);
-    }
-  };
-
-  const abrirArchivoAdjunto = (url: string) => {
-    if (!url) return;
-    if (url.startsWith('data:')) {
-      const win = window.open();
-      if (win) {
-        win.document.write(
-          `<iframe src="${url}" frameborder="0" style="border:0;width:100%;height:100vh;" allowfullscreen></iframe>`
-        );
-      }
-    } else {
-      window.open(url, '_blank', 'noopener,noreferrer');
     }
   };
 
   const guardarCompra = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (cargando) return;
     setCargando(true);
 
-    const proy = proyectos.find((p) => p.codigo === proyectoCodigo);
-    const impNum = parsearNumero(importe);
-    const cotNum = parsearNumero(valorUsd);
-    const impUsdNum =
-      moneda === 'USD'
-        ? impNum
-        : parsearNumero(importeUsd) || (cotNum > 0 ? Number((impNum / cotNum).toFixed(2)) : 0);
+    try {
+      const imp = parsearNum(importeTexto);
+      const cot = parsearNum(valorUsdTexto) || 1450;
+      const impUsd = moneda === 'USD' ? imp : Math.round((imp / cot) * 100) / 100;
+      const proy = proyectos.find((p) => p.codigo === proyectoCodigo);
+      const materialesLimpios = itemsMateriales.filter((m) => m.material.trim() !== '');
 
-    const datosCompra = {
-      proyecto_id: proy?.id ? String(proy.id) : null,
-      proyecto_codigo: proy?.codigo || proyectoCodigo,
-      proyecto_nombre: proy?.nombre || '',
-      proyecto_estado: proy?.estado || 'En Diseño',
-      proveedor: proveedor || 'Proveedor general',
-      concepto: concepto.trim(),
-      moneda,
-      importe: impNum,
-      estado,
-      fecha,
-      nro_orden: nroOrden.trim() || null,
-      tipo_comprobante: tipoComprobante,
-      archivo_url: archivoUrl || null,
-      archivo_nombre: archivoNombre || null,
-      enlace_externo: enlaceExterno.trim() || null,
-      enlace_nombre: enlaceNombre.trim() || null,
-      notas: notas.trim() || null,
-      fecha_conversion: fechaConversion || fecha,
-      valor_usd: cotNum || null,
-      importe_usd: impUsdNum || null,
-    };
+      const payload: Record<string, any> = {
+        proyecto_codigo: proy?.codigo || proyectoCodigo || null,
+        proyecto_nombre: proy?.nombre || null,
+        proveedor: proveedor.trim(),
+        concepto: concepto.trim() || materialesLimpios[0]?.material || 'Compra de materiales',
+        nro_orden: nroOrden.trim() || null,
+        fecha,
+        moneda,
+        importe: imp,
+        valor_usd: cot,
+        importe_usd: impUsd,
+        estado,
+        archivo_url: archivoUrl.trim() || null,
+        items_materiales: materialesLimpios,
+      };
 
-    const { error } = compraEditando
-      ? await supabase.from('compras').update(datosCompra).eq('id', compraEditando.id)
-      : await supabase.from('compras').insert([datosCompra]);
+      const { error } = compraEditando
+        ? await supabase.from('compras').update(payload).eq('id', compraEditando.id)
+        : await supabase.from('compras').insert([payload]);
 
-    if (!error) {
-      const etiquetaProy = proy ? `${proy.codigo} · ${proy.nombre}` : proyectoCodigo;
-
-      if (impNum > 0) {
-        const movDatos = {
-          fecha: fechaConversion || fecha,
-          tipo: 'Egreso',
-          categoria: 'Compras y Materiales de Obra',
-          concepto: `${concepto.trim()} · ${proveedor || 'Proveedor'}`,
-          proyecto: etiquetaProy,
-          proyecto_codigo: proy?.codigo || proyectoCodigo,
-          proyecto_nombre: proy?.nombre || '',
-          cliente_id: proy?.cliente_id || null,
-          proveedor: proveedor || null,
-          moneda,
-          importe: impNum,
-          monto: impNum,
-          estado: estado === 'Pagado' || estado === 'Entregado' ? 'Abonado' : 'Resta abonar',
-          comprobante: nroOrden.trim() || null,
-          tipo_comprobante: tipoComprobante,
-          archivo_url: archivoUrl || null,
-          archivo_nombre: archivoNombre || null,
-          fecha_conversion: fechaConversion || fecha,
-          valor_usd: cotNum || null,
-          importe_usd: impUsdNum || null,
-        };
-
-        if (compraEditando?.movimiento_id) {
-          await supabase.from('movimientos').update(movDatos).eq('id', compraEditando.movimiento_id);
-        } else if (!compraEditando) {
-          await supabase.from('movimientos').insert([movDatos]);
-        }
+      if (error) {
+        alert('Error al guardar compra: ' + error.message);
+        return;
       }
 
-      setCargando(false);
       onClose();
-      onGuardado(compraEditando ? 'Pedido actualizado' : 'Compra registrada y enviada a Finanzas');
-    } else {
+      onGuardado(compraEditando ? 'Compra actualizada' : 'Compra registrada correctamente');
+    } catch (err: any) {
+      alert('Error inesperado: ' + (err?.message || 'Sin conexión'));
+    } finally {
       setCargando(false);
-      alert('Error al guardar el pedido: ' + error.message);
     }
   };
 
@@ -364,33 +224,36 @@ export default function ModalCompraPedido({
       await moverAPapelera({
         tabla: 'compras',
         modulo: 'Compras y Pedidos',
-        titulo: compraEditando.concepto || 'Compra sin concepto',
-        subtitulo: `${compraEditando.proveedor || ''} · ${compraEditando.moneda || 'ARS'} ${compraEditando.importe || 0}`,
+        titulo: `${compraEditando.proveedor || 'Proveedor'} · ${compraEditando.concepto || ''}`,
+        subtitulo: compraEditando.nro_orden || '',
         registro: compraEditando,
       });
       onClose();
       onGuardado('Compra enviada a papelera');
-    } catch (error: any) {
-      alert('Error al mover a papelera: ' + error.message);
+    } catch (err: any) {
+      alert('Error al eliminar: ' + err.message);
     } finally {
       setCargando(false);
     }
   };
 
-  return (
-    <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4 backdrop-blur-sm">
-      <div className="bg-[#1A1A1A] rounded-2xl border border-gray-800 w-full max-w-2xl shadow-2xl overflow-hidden flex flex-col max-h-[92vh]">
-        <div className="px-6 pt-6 pb-4 flex justify-between items-start border-b border-gray-800/80">
+  return createPortal(
+    <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-[9999] p-4 backdrop-blur-sm">
+      <div className="bg-[#1A1A1A] border border-gray-800 rounded-2xl w-full max-w-2xl shadow-2xl overflow-hidden flex flex-col max-h-[92vh]">
+        <div className="px-6 pt-5 pb-4 border-b border-gray-800 flex justify-between items-center">
           <div>
-            <h2 className="text-lg font-bold text-white flex items-center gap-2">
-              <ShoppingCart className="w-5 h-5 text-[#EAB308]" />
-              {compraEditando ? 'Editar Pedido / Compra' : 'Nuevo Pedido / Compra'}
+            <h2 className="text-lg font-bold text-white">
+              {compraEditando ? 'Editar Compra / Factura' : 'Nueva Compra / Factura'}
             </h2>
             <p className="text-xs text-gray-400 mt-0.5">
-              Suministros vinculados al proyecto, proveedor y comprobante adjunto
+              Registrá proveedor, comprobante, importe y detalle de materiales adquiridos
             </p>
           </div>
-          <button onClick={onClose} className="text-gray-400 hover:text-white cursor-pointer">
+          <button
+            type="button"
+            onClick={onClose}
+            className="text-gray-400 hover:text-white cursor-pointer"
+          >
             <X className="w-5 h-5" />
           </button>
         </div>
@@ -398,363 +261,269 @@ export default function ModalCompraPedido({
         <form onSubmit={guardarCompra} className="px-6 py-5 overflow-y-auto space-y-4">
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div>
-              <label className="block text-xs font-semibold text-gray-300 mb-1.5">
-                Corresponde al Proyecto / Obra *
+              <label className="block text-xs font-semibold text-gray-300 mb-1">
+                Obra / Proyecto
               </label>
               <select
-                required
                 value={proyectoCodigo}
+                disabled={Boolean(proyectoFijoCodigo)}
                 onChange={(e) => setProyectoCodigo(e.target.value)}
-                className="w-full bg-[#121212] border border-gray-700/80 rounded-lg px-3 py-2.5 text-sm text-white min-h-[44px]"
+                className="w-full bg-[#121212] border border-gray-800 rounded-lg px-3 py-2 text-xs text-white"
               >
+                <option value="">General del Estudio</option>
                 {proyectos.map((p) => (
                   <option key={p.codigo} value={p.codigo}>
-                    {p.codigo} — {p.nombre}
+                    {p.codigo} · {p.nombre}
                   </option>
                 ))}
               </select>
             </div>
 
             <div>
-              <label className="block text-xs font-semibold text-gray-300 mb-1.5">
-                Proveedor / Contratista
-              </label>
-              <select
+              <label className="block text-xs font-semibold text-gray-300 mb-1">Proveedor *</label>
+              <input
+                type="text"
+                list="lista-proveedores-sug"
+                required
                 value={proveedor}
                 onChange={(e) => setProveedor(e.target.value)}
-                className="w-full bg-[#121212] border border-gray-700/80 rounded-lg px-3 py-2.5 text-sm text-white min-h-[44px]"
-              >
-                {proveedores.length === 0 ? (
-                  <option value="">Sin proveedores cargados</option>
-                ) : (
-                  proveedores.map((prov) => (
-                    <option key={prov.id} value={prov.nombre}>
-                      {prov.nombre}
-                    </option>
-                  ))
-                )}
-              </select>
+                placeholder="Ej. Electro Star"
+                className="w-full bg-[#121212] border border-gray-800 rounded-lg px-3 py-2 text-xs text-white"
+              />
+              <datalist id="lista-proveedores-sug">
+                {proveedores.map((pr) => (
+                  <option key={pr.id} value={pr.nombre} />
+                ))}
+              </datalist>
             </div>
-          </div>
-
-          <div>
-            <label className="block text-xs font-semibold text-gray-300 mb-1.5">
-              Concepto del Pedido *
-            </label>
-            <input
-              type="text"
-              required
-              value={concepto}
-              onChange={(e) => setConcepto(e.target.value)}
-              placeholder="Ej. Materiales eléctricos, hierro, sanitarios..."
-              className="w-full bg-[#121212] border border-gray-700/80 rounded-lg px-3 py-2.5 text-sm text-white placeholder-gray-500"
-            />
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            <div>
-              <label className="block text-xs font-semibold text-gray-300 mb-1.5">Moneda *</label>
-              <select
-                value={moneda}
-                onChange={(e) => setMoneda(e.target.value as 'ARS' | 'USD')}
-                className="w-full bg-[#121212] border border-gray-700/80 rounded-lg px-3 py-2.5 text-sm text-white"
-              >
-                <option value="ARS">ARS</option>
-                <option value="USD">USD</option>
-              </select>
-            </div>
-
-            <div>
-              <label className="block text-xs font-semibold text-gray-300 mb-1.5">Importe *</label>
+            <div className="md:col-span-2">
+              <label className="block text-xs font-semibold text-gray-300 mb-1">
+                Concepto / Descripción General *
+              </label>
               <input
                 type="text"
                 required
-                value={importe}
-                onChange={(e) => {
-                  setImporte(e.target.value);
-                  recalcularImporteUsd(e.target.value, valorUsd);
-                }}
-                placeholder="0,00"
-                className="w-full bg-[#121212] border border-gray-700/80 rounded-lg px-3 py-2.5 text-sm text-white font-semibold"
+                value={concepto}
+                onChange={(e) => setConcepto(e.target.value)}
+                placeholder="Ej. Materiales eléctricos y tableros"
+                className="w-full bg-[#121212] border border-gray-800 rounded-lg px-3 py-2 text-xs text-white"
               />
             </div>
 
             <div>
-              <label className="block text-xs font-semibold text-gray-300 mb-1.5">Estado</label>
-              <select
-                value={estado}
-                onChange={(e) => setEstado(e.target.value)}
-                className="w-full bg-[#121212] border border-gray-700/80 rounded-lg px-3 py-2.5 text-sm text-white"
-              >
-                <option value="Encargado">Encargado</option>
-                <option value="En Acopio">En Acopio</option>
-                <option value="Entregado">Entregado</option>
-                <option value="Pagado">Pagado</option>
-              </select>
-            </div>
-          </div>
-
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            <div>
-              <label className="block text-xs font-semibold text-gray-300 mb-1.5">Fecha</label>
-              <input
-                type="date"
-                value={fecha}
-                onChange={(e) => {
-                  setFecha(e.target.value);
-                  setFechaConversion(e.target.value);
-                  consultarDolarBna(e.target.value, importe);
-                }}
-                className="w-full bg-[#121212] border border-gray-700/80 rounded-lg px-3 py-2.5 text-sm text-white [color-scheme:dark]"
-              />
-            </div>
-
-            <div>
-              <label className="block text-xs font-semibold text-gray-300 mb-1.5">
-                Nro. Orden / Factura
+              <label className="block text-xs font-semibold text-gray-300 mb-1">
+                N° Factura / Remito
               </label>
               <input
                 type="text"
                 value={nroOrden}
                 onChange={(e) => setNroOrden(e.target.value)}
-                placeholder="0001-00001234"
-                className="w-full bg-[#121212] border border-gray-700/80 rounded-lg px-3 py-2.5 text-sm text-white"
+                placeholder="0004-00005127"
+                className="w-full bg-[#121212] border border-gray-800 rounded-lg px-3 py-2 text-xs text-white"
+              />
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
+            <div className="md:col-span-2">
+              <label className="block text-xs font-semibold text-gray-300 mb-1">
+                Moneda e Importe Total *
+              </label>
+              <div className="flex gap-1.5">
+                <select
+                  value={moneda}
+                  onChange={(e) => setMoneda(e.target.value as 'ARS' | 'USD')}
+                  className="bg-[#121212] border border-gray-800 rounded-lg px-2.5 py-2 text-xs font-extrabold text-white"
+                >
+                  <option value="ARS">ARS</option>
+                  <option value="USD">USD</option>
+                </select>
+                <input
+                  type="text"
+                  required
+                  value={importeTexto}
+                  onChange={(e) => setImporteTexto(formatearMilesDecimales(e.target.value))}
+                  placeholder="Ej. 125.328,50"
+                  className="w-full bg-[#121212] border border-gray-800 rounded-lg px-3 py-2 text-xs font-bold text-white"
+                />
+              </div>
+            </div>
+
+            <div>
+              <label className="block text-xs font-semibold text-gray-300 mb-1">
+                Cotiz. USD
+              </label>
+              <input
+                type="text"
+                value={valorUsdTexto}
+                onChange={(e) => setValorUsdTexto(formatearMilesDecimales(e.target.value))}
+                className="w-full bg-[#121212] border border-gray-800 rounded-lg px-3 py-2 text-xs text-white"
               />
             </div>
 
             <div>
-              <label className="block text-xs font-semibold text-gray-300 mb-1.5">
-                Tipo de Comprobante
+              <label className="block text-xs font-semibold text-gray-300 mb-1">Fecha</label>
+              <input
+                type="date"
+                value={fecha}
+                onChange={(e) => setFecha(e.target.value)}
+                className="w-full bg-[#121212] border border-gray-800 rounded-lg px-3 py-2 text-xs text-white [color-scheme:dark]"
+              />
+            </div>
+          </div>
+
+          {/* DETALLE DE MATERIALES Y CANTIDADES DEL PEDIDO */}
+          <div className="bg-[#141414] border border-gray-800 rounded-xl p-4 space-y-3">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Package className="w-4 h-4 text-[#EAB308]" />
+                <div>
+                  <div className="text-xs font-bold text-white">
+                    Detalle de Materiales y Cantidades ({itemsMateriales.length})
+                  </div>
+                  <div className="text-[11px] text-gray-400">
+                    Visible al entrar al proveedor dentro de la ficha del proyecto
+                  </div>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={agregarMaterial}
+                className="bg-[#EAB308] hover:bg-[#CA9A04] text-black px-3 py-1.5 rounded-lg text-[11px] font-bold inline-flex items-center gap-1 cursor-pointer"
+              >
+                <Plus className="w-3.5 h-3.5" /> Agregar ítem
+              </button>
+            </div>
+
+            {itemsMateriales.length > 0 && (
+              <div className="space-y-2 pt-2 border-t border-gray-800">
+                {itemsMateriales.map((it) => (
+                  <div key={it.id} className="grid grid-cols-12 gap-2 items-center">
+                    <input
+                      type="text"
+                      value={it.material}
+                      onChange={(e) => actualizarMaterial(it.id, 'material', e.target.value)}
+                      placeholder="Material (ej. Cable 2.5mm)"
+                      className="col-span-5 bg-[#121212] border border-gray-700 rounded-lg px-2.5 py-1.5 text-xs text-white"
+                    />
+                    <input
+                      type="text"
+                      value={it.cantidad}
+                      onChange={(e) => actualizarMaterial(it.id, 'cantidad', e.target.value)}
+                      placeholder="Cant."
+                      className="col-span-2 bg-[#121212] border border-gray-700 rounded-lg px-2 py-1.5 text-xs text-white text-center"
+                    />
+                    <input
+                      type="text"
+                      value={it.unidad}
+                      onChange={(e) => actualizarMaterial(it.id, 'unidad', e.target.value)}
+                      placeholder="Unid."
+                      className="col-span-2 bg-[#121212] border border-gray-700 rounded-lg px-2 py-1.5 text-xs text-white text-center"
+                    />
+                    <select
+                      value={it.estado}
+                      onChange={(e) => actualizarMaterial(it.id, 'estado', e.target.value)}
+                      className="col-span-2 bg-[#121212] border border-gray-700 rounded-lg px-1.5 py-1.5 text-[11px] text-white"
+                    >
+                      <option value="Entregado">Entregado</option>
+                      <option value="Encargado">Encargado</option>
+                      <option value="En tránsito">En tránsito</option>
+                      <option value="Pendiente">Pendiente</option>
+                    </select>
+                    <button
+                      type="button"
+                      onClick={() => quitarMaterial(it.id)}
+                      className="col-span-1 text-rose-400 hover:text-rose-300 flex justify-center cursor-pointer"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 items-center">
+            <div>
+              <label className="block text-xs font-semibold text-gray-300 mb-1">
+                Estado General del Pedido
               </label>
               <select
-                value={tipoComprobante}
-                onChange={(e) => setTipoComprobante(e.target.value)}
-                className="w-full bg-[#121212] border border-gray-700/80 rounded-lg px-3 py-2.5 text-sm text-white"
+                value={estado}
+                onChange={(e) => setEstado(e.target.value)}
+                className="w-full bg-[#121212] border border-gray-800 rounded-lg px-3 py-2 text-xs text-white"
               >
-                <option value="Factura">Factura</option>
-                <option value="Remito">Remito</option>
-                <option value="Presupuesto">Presupuesto</option>
-                <option value="Recibo">Recibo</option>
+                <option value="Entregado">Entregado</option>
+                <option value="Encargado">Encargado</option>
+                <option value="En tránsito">En tránsito</option>
+                <option value="Pendiente de pago">Pendiente de pago</option>
               </select>
             </div>
-          </div>
 
-          <div className="bg-[#141414] border border-gray-800 rounded-xl p-4 space-y-3">
             <div>
-              <div className="text-sm font-bold text-white flex items-center gap-1.5">
-                📎 Comprobante Adjunto (Factura)
-              </div>
-              <p className="text-xs text-gray-400 mt-1">
-                Subí un archivo desde tu dispositivo o pegá abajo un enlace externo (Google Drive,
-                Dropbox, Nube).
-              </p>
-            </div>
-
-            <label className="border border-dashed border-gray-700 hover:border-[#EAB308]/60 bg-[#121212] rounded-xl p-5 flex flex-col items-center justify-center text-center cursor-pointer transition-colors">
-              {leyendoPdf || subiendoArchivo ? (
-                <div className="flex items-center gap-2 text-xs text-[#EAB308] font-bold">
-                  <Loader2 className="w-4 h-4 animate-spin" />
-                  {leyendoPdf ? 'Extrayendo datos de factura PDF...' : 'Subiendo archivo...'}
-                </div>
-              ) : (
-                <>
-                  <Upload className="w-5 h-5 text-[#EAB308] mb-2" />
-                  <div className="text-sm font-bold text-[#EAB308]">
-                    {archivoNombre
-                      ? `Adjunto: ${archivoNombre}`
-                      : 'Hacé clic aquí para adjuntar un archivo (PDF, imagen, plano, planilla)'}
-                  </div>
-                  <div className="text-xs text-gray-400 mt-1 max-w-md">
-                    Las fotos se optimizan solas. Para archivos pesados (+450 KB), pegá el enlace de
-                    Google Drive abajo.
-                  </div>
-                </>
-              )}
-              <input
-                type="file"
-                accept=".pdf,image/*,.xls,.xlsx,.dwg"
-                onChange={manejarAdjunto}
-                className="hidden"
-              />
-            </label>
-
-            {archivoNombre && (
-              <div className="flex items-center justify-between bg-[#1A1A1A] border border-gray-800 rounded-lg px-3 py-2 text-xs">
-                <span className="truncate text-gray-200">{archivoNombre}</span>
-                <div className="flex items-center gap-3 flex-shrink-0">
-                  {archivoUrl && (
-                    <button
-                      type="button"
-                      onClick={() => abrirArchivoAdjunto(archivoUrl)}
-                      className="text-blue-400 hover:underline font-semibold cursor-pointer"
-                    >
-                      Ver archivo
-                    </button>
+              <label className="block text-xs font-semibold text-gray-300 mb-1">
+                Comprobante PDF / Drive
+              </label>
+              <div className="flex items-center gap-2">
+                <label className="bg-[#121212] border border-gray-800 hover:border-[#EAB308] px-3 py-2 rounded-lg text-xs font-bold text-gray-200 inline-flex items-center gap-1.5 cursor-pointer flex-shrink-0">
+                  {subiendoArchivo ? (
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  ) : (
+                    <Upload className="w-3.5 h-3.5 text-[#EAB308]" />
                   )}
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setArchivoUrl('');
-                      setArchivoNombre('');
-                    }}
-                    className="text-rose-400 hover:underline font-semibold cursor-pointer"
-                  >
-                    Quitar
-                  </button>
+                  <span>PDF</span>
+                  <input type="file" onChange={subirArchivo} className="hidden" />
+                </label>
+                <div className="flex-1 flex items-center gap-1">
+                  <Link2 className="w-3.5 h-3.5 text-gray-400" />
+                  <input
+                    type="text"
+                    value={archivoUrl}
+                    onChange={(e) => setArchivoUrl(e.target.value)}
+                    placeholder="URL Drive..."
+                    className="w-full bg-[#121212] border border-gray-800 rounded-lg px-2.5 py-2 text-xs text-white"
+                  />
                 </div>
-              </div>
-            )}
-
-            <div className="space-y-2 pt-1">
-              <div className="text-xs text-gray-300 font-medium flex items-center gap-1.5">
-                🔗 O pegar enlace externo (Google Drive, Dropbox, OneDrive):
-              </div>
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
-                <input
-                  type="text"
-                  value={enlaceExterno}
-                  onChange={(e) => setEnlaceExterno(e.target.value)}
-                  placeholder="https://drive.google.com/..."
-                  className="md:col-span-2 bg-[#121212] border border-gray-800 rounded-lg px-3 py-2.5 text-xs text-white placeholder-gray-500"
-                />
-                <input
-                  type="text"
-                  value={enlaceNombre}
-                  onChange={(e) => setEnlaceNombre(e.target.value)}
-                  placeholder="Nombre visible (opcional)"
-                  className="bg-[#121212] border border-gray-800 rounded-lg px-3 py-2.5 text-xs text-white placeholder-gray-500"
-                />
               </div>
             </div>
           </div>
 
-          <div className="bg-[#141414] border border-gray-800 rounded-xl p-4 space-y-3">
-            <button
-              type="button"
-              onClick={() => setMostrarMasDatos(!mostrarMasDatos)}
-              className="w-full flex items-center justify-between text-xs font-bold text-white cursor-pointer"
-            >
-              <span>
-                {mostrarMasDatos ? '−' : '+'} Más datos (opcional){' '}
-                <span className="text-gray-400 font-normal">
-                  conversión ARS a USD: fecha, valor USD e importe USD
-                </span>
-              </span>
-            </button>
-
-            {mostrarMasDatos && (
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-3 pt-1">
-                <div>
-                  <label className="block text-[11px] font-semibold text-gray-300 mb-1">
-                    Fecha
-                  </label>
-                  <input
-                    type="date"
-                    value={fechaConversion}
-                    onChange={(e) => {
-                      setFechaConversion(e.target.value);
-                      consultarDolarBna(e.target.value, importe);
-                    }}
-                    className="w-full bg-[#121212] border border-gray-800 rounded-lg px-3 py-2 text-xs text-white [color-scheme:dark]"
-                  />
-                </div>
-
-                <div>
-                  <div className="flex items-center justify-between mb-1">
-                    <label className="block text-[11px] font-semibold text-gray-300">
-                      Valor USD
-                    </label>
-                    <button
-                      type="button"
-                      onClick={() => consultarDolarBna(fechaConversion || fecha, importe)}
-                      disabled={consultandoBna}
-                      className="text-[10px] font-bold text-[#EAB308] hover:underline inline-flex items-center gap-1 cursor-pointer"
-                    >
-                      <RefreshCw
-                        className={`w-2.5 h-2.5 ${consultandoBna ? 'animate-spin' : ''}`}
-                      />
-                      Traer BNA
-                    </button>
-                  </div>
-                  <input
-                    type="text"
-                    value={valorUsd}
-                    onChange={(e) => {
-                      const f = formatearMiles(e.target.value);
-                      setValorUsd(f);
-                      recalcularImporteUsd(importe, f);
-                    }}
-                    placeholder="Ej. 1.430"
-                    className="w-full bg-[#121212] border border-gray-800 rounded-lg px-3 py-2 text-xs text-white font-semibold"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-[11px] font-semibold text-gray-300 mb-1">
-                    Importe USD
-                  </label>
-                  <input
-                    type="text"
-                    value={importeUsd}
-                    readOnly
-                    placeholder="0,00"
-                    className="w-full bg-[#121212] border border-[#EAB308]/40 rounded-lg px-3 py-2 text-xs font-extrabold text-[#EAB308]"
-                  />
-                </div>
-              </div>
-            )}
-          </div>
-
-          <div>
-            <label className="block text-xs font-semibold text-gray-300 mb-1.5">
-              Detalle / Notas de Entrega
-            </label>
-            <textarea
-              rows={2}
-              value={notas}
-              onChange={(e) => setNotas(e.target.value)}
-              placeholder="Plazo de entrega, condiciones de acopio..."
-              className="w-full bg-[#121212] border border-gray-700/80 rounded-lg px-3 py-2 text-sm text-white placeholder-gray-500 resize-none"
-            />
-          </div>
-
-          <div className="flex justify-between items-center pt-3 border-t border-gray-800/80">
+          <div className="flex justify-between items-center pt-3 border-t border-gray-800">
             <div>
               {compraEditando && (
                 <button
                   type="button"
                   onClick={eliminarCompra}
                   disabled={cargando}
-                  className="text-red-500 hover:bg-red-500/15 px-3.5 py-2 rounded-lg text-xs font-semibold inline-flex items-center gap-1.5 cursor-pointer"
+                  className="text-rose-400 hover:text-rose-300 text-xs font-semibold inline-flex items-center gap-1.5 cursor-pointer"
                 >
-                  <Trash2 className="w-4 h-4" /> Enviar a papelera
+                  <Trash2 className="w-3.5 h-3.5" /> Enviar a papelera
                 </button>
               )}
             </div>
-
-            <div className="flex items-center gap-3">
+            <div className="flex items-center gap-2">
               <button
                 type="button"
                 onClick={onClose}
-                className="text-gray-300 hover:text-white px-4 py-2 rounded-lg text-xs font-semibold cursor-pointer"
+                className="px-4 py-2 rounded-lg text-xs text-gray-300 hover:text-white cursor-pointer"
               >
                 Cancelar
               </button>
               <button
                 type="submit"
                 disabled={cargando}
-                className="bg-[#EAB308] hover:bg-[#CA9A04] text-black px-5 py-2.5 rounded-lg font-bold text-xs cursor-pointer"
+                className="bg-[#EAB308] hover:bg-[#CA9A04] text-black px-5 py-2 rounded-lg text-xs font-bold cursor-pointer disabled:opacity-50"
               >
-                {cargando
-                  ? 'Guardando...'
-                  : compraEditando
-                  ? 'Guardar Cambios'
-                  : 'Registrar Pedido'}
+                {cargando ? 'Guardando...' : 'Guardar Compra'}
               </button>
             </div>
           </div>
         </form>
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }

@@ -1,31 +1,40 @@
 "use client";
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { createPortal } from 'react-dom';
 import { supabase } from '@/lib/supabase';
 import { moverAPapelera } from '@/lib/papelera';
-import { extraerDatosFacturaPdf } from '@/lib/leerFacturaPdf';
-import { X, Upload, FileText, RefreshCw, Loader2, Trash2 } from 'lucide-react';
+import { X, Upload, Link2, Trash2, Loader2, Calculator } from 'lucide-react';
 
-const CATEGORIAS_INGRESO = [
-  'Honorarios Proyecto',
-  'Anticipo de Obra',
-  'Certificación de Avance',
-  'Dirección de Obra',
-  'Consultoría / Asesoramiento',
-  'Otros Ingresos',
-];
+function formatearMilesDecimales(valorCrudo: string): string {
+  const limpio = valorCrudo.replace(/[^\d,]/g, '');
+  if (!limpio) return '';
+  const partes = limpio.split(',');
+  const enteros = partes[0].replace(/^0+(?=\d)/, '');
+  const conPuntos = enteros.replace(/\B(?=(\d{3})+(?!\d))/g, '.');
+  if (partes.length > 1) {
+    return `${conPuntos || '0'},${partes[1].slice(0, 2)}`;
+  }
+  return conPuntos;
+}
 
-const CATEGORIAS_EGRESO = [
-  'Compras y Materiales de Obra',
-  'Compra / Materiales',
-  'Mano de Obra / Subcontratistas',
-  'Asesores y Calculistas',
-  'Gastos de Obra',
-  'Fletes y Logística',
-  'Impuestos y Tasas',
-  'Gastos Administrativos',
-];
+function parsearNum(valor: string | number): number {
+  if (typeof valor === 'number') return valor;
+  const s = String(valor || '').trim();
+  if (!s) return 0;
+  if (s.includes(',')) return parseFloat(s.replace(/\./g, '').replace(',', '.')) || 0;
+  const puntos = (s.match(/\./g) || []).length;
+  if (puntos > 1) return parseFloat(s.replace(/\./g, '')) || 0;
+  return parseFloat(s) || 0;
+}
+
+function numATextoArg(n: number): string {
+  if (!n) return '';
+  return n.toLocaleString('es-AR', {
+    minimumFractionDigits: n % 1 === 0 ? 0 : 2,
+    maximumFractionDigits: 2,
+  });
+}
 
 export default function ModalMovimientoFinanciero({
   abierto,
@@ -36,338 +45,244 @@ export default function ModalMovimientoFinanciero({
   clientes = [],
   proveedores = [],
   proyectoFijoCodigo = '',
-  monedaInicial = 'USD',
+  monedaInicial = 'ARS',
 }: {
   abierto: boolean;
   onClose: () => void;
-  onGuardado: (mensaje: string, monedaGuardada?: 'USD' | 'ARS') => void;
+  onGuardado: (mensaje: string) => void;
   movEditando?: any | null;
   proyectos?: any[];
   clientes?: any[];
   proveedores?: any[];
   proyectoFijoCodigo?: string;
-  monedaInicial?: 'USD' | 'ARS';
+  monedaInicial?: 'ARS' | 'USD';
 }) {
   const [montado, setMontado] = useState(false);
   const [cargando, setCargando] = useState(false);
-  const [subiendoPdf, setSubiendoPdf] = useState(false);
-  const [leyendoPdf, setLeyendoPdf] = useState(false);
-  const [consultandoBna, setConsultandoBna] = useState(false);
+  const [subiendoArchivo, setSubiendoArchivo] = useState(false);
+
+  const hoy = new Date().toISOString().split('T')[0];
 
   const [tipo, setTipo] = useState<'Ingreso' | 'Egreso'>('Ingreso');
-  const [categoria, setCategoria] = useState('Honorarios Proyecto');
-  const [comprobante, setComprobante] = useState('');
+  const [proyectoCodigo, setProyectoCodigo] = useState(
+    proyectoFijoCodigo || proyectos[0]?.codigo || ''
+  );
+  const [categoria, setCategoria] = useState('Certificación de Obra');
   const [concepto, setConcepto] = useState('');
-  const [moneda, setMoneda] = useState<'USD' | 'ARS'>(monedaInicial);
-  const [importe, setImporte] = useState('');
-  const [tipoComprobante, setTipoComprobante] = useState('Factura A');
+  const [moneda, setMoneda] = useState<'ARS' | 'USD'>(monedaInicial);
+  const [importeTexto, setImporteTexto] = useState('');
+  const [valorUsdTexto, setValorUsdTexto] = useState('1.450');
+  const [fecha, setFecha] = useState(hoy);
   const [estado, setEstado] = useState('Abonado');
+  const [tipoComprobante, setTipoComprobante] = useState('Factura C');
+  const [comprobante, setComprobante] = useState('');
   const [archivoUrl, setArchivoUrl] = useState('');
-  const [archivoNombre, setArchivoNombre] = useState('');
-  const [formaPago, setFormaPago] = useState('Transferencia');
-  const [fecha, setFecha] = useState(() => new Date().toISOString().split('T')[0]);
-  const [proyectoCodigo, setProyectoCodigo] = useState(proyectoFijoCodigo);
-  const [clienteId, setClienteId] = useState('');
-  const [proveedorNombre, setProveedorNombre] = useState('');
   const [notas, setNotas] = useState('');
 
-  const [mostrarMasDatos, setMostrarMasDatos] = useState(false);
-  const [fechaConversion, setFechaConversion] = useState(() => new Date().toISOString().split('T')[0]);
-  const [valorUsd, setValorUsd] = useState('');
-  const [importeUsd, setImporteUsd] = useState('');
+  // Campos de Redeterminación Índice CAC
+  const [serieCAC, setSerieCAC] = useState<{ periodo: string; etiqueta: string; valor: number }[]>([
+    { periodo: 'OCT2026', etiqueta: 'Octubre 2026', valor: 23884.2 },
+  ]);
+  const [aplicarCAC, setAplicarCAC] = useState(false);
+  const [cacMesBase, setCacMesBase] = useState('OCT2026');
+  const [cacValorBaseTexto, setCacValorBaseTexto] = useState('23.884,20');
+  const [cacMesActual, setCacMesActual] = useState('OCT2026');
+  const [cacValorActualTexto, setCacValorActualTexto] = useState('23.884,20');
 
   useEffect(() => {
     setMontado(true);
+    fetch('/api/indice-cac')
+      .then((r) => (r.ok ? r.json() : null))
+      .then((json) => {
+        if (json?.serie?.length) {
+          setSerieCAC(json.serie);
+        }
+      })
+      .catch(() => {});
   }, []);
 
-  const parsearNumero = (val: string) => {
-    if (!val) return 0;
-    const limpio = String(val).replace(/\./g, '').replace(',', '.').replace(/[^0-9.-]/g, '');
-    const num = parseFloat(limpio);
-    return isNaN(num) ? 0 : num;
-  };
-
-  const formatearMiles = (val: string) => {
-    const soloDigitos = val.replace(/\D/g, '');
-    if (!soloDigitos) return '';
-    return Number(soloDigitos).toLocaleString('es-AR');
-  };
-
-  const recalcularImporteUsd = (impStr: string, cotStr: string) => {
-    const imp = parsearNumero(impStr);
-    const cot = parsearNumero(cotStr);
-    if (imp > 0 && cot > 0) {
-      const res = imp / cot;
-      setImporteUsd(
-        res.toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
-      );
-    } else {
-      setImporteUsd('');
-    }
-  };
-
-  const consultarDolarBna = async (fechaTarget: string, importeActual: string) => {
-    if (!fechaTarget) return;
-    setConsultandoBna(true);
-    try {
-      const res = await fetch(`/api/dolar-bna?fecha=${fechaTarget}`);
-      const data = await res.json();
-      if (data?.valor) {
-        const cotStr = Number(data.valor).toLocaleString('es-AR', {
-          minimumFractionDigits: data.valor % 1 === 0 ? 0 : 2,
-          maximumFractionDigits: 2,
-        });
-        setValorUsd(cotStr);
-        recalcularImporteUsd(importeActual, cotStr);
-      }
-    } catch {
-      // Silencioso
-    } finally {
-      setConsultandoBna(false);
-    }
-  };
+  const proyectoSeleccionado = useMemo(
+    () => proyectos.find((p) => p.codigo === proyectoCodigo),
+    [proyectos, proyectoCodigo]
+  );
 
   useEffect(() => {
     if (!abierto) return;
-    const hoy = new Date().toISOString().split('T')[0];
+    const hoyIso = new Date().toISOString().split('T')[0];
 
     if (movEditando) {
-      const t = String(movEditando.tipo || '').toLowerCase();
-      const tipoMov: 'Ingreso' | 'Egreso' =
-        t === 'egreso' || t === 'gasto' || t === 'compra' ? 'Egreso' : 'Ingreso';
-      const monMov: 'USD' | 'ARS' =
-        (movEditando.moneda || 'USD').toUpperCase() === 'ARS' ? 'ARS' : 'USD';
-      const impRaw = Number(movEditando.importe ?? 0) || Number(movEditando.monto ?? 0);
-
-      setTipo(tipoMov);
-      setCategoria(
-        movEditando.categoria ||
-          (tipoMov === 'Ingreso' ? 'Honorarios Proyecto' : 'Compras y Materiales de Obra')
-      );
-      setComprobante(movEditando.comprobante || '');
+      const esEg = String(movEditando.tipo || '').toLowerCase() === 'egreso';
+      setTipo(esEg ? 'Egreso' : 'Ingreso');
+      setProyectoCodigo(movEditando.proyecto_codigo || proyectoFijoCodigo || '');
+      setCategoria(movEditando.categoria || (esEg ? 'Materiales / Obra' : 'Certificación de Obra'));
       setConcepto(movEditando.concepto || '');
-      setMoneda(monMov);
-      setImporte(
-        impRaw
-          ? impRaw.toLocaleString('es-AR', {
-              minimumFractionDigits: impRaw % 1 === 0 ? 0 : 2,
-              maximumFractionDigits: 2,
-            })
-          : ''
-      );
-      setTipoComprobante(movEditando.tipo_comprobante || 'Factura A');
-      setEstado(movEditando.estado || (tipoMov === 'Ingreso' ? 'Abonado' : 'Resta abonar'));
-      setArchivoUrl(movEditando.archivo_url || '');
-      setArchivoNombre(movEditando.archivo_nombre || '');
-      setFormaPago(movEditando.forma_pago || 'Transferencia');
-      setFecha(movEditando.fecha || hoy);
+      setMoneda(String(movEditando.moneda || 'ARS').toUpperCase() === 'USD' ? 'USD' : 'ARS');
 
-      const proyEnc = proyectos.find(
-        (p) =>
-          movEditando.proyecto_codigo === p.codigo ||
-          movEditando.proyecto === `${p.codigo} · ${p.nombre}` ||
-          movEditando.proyecto === p.codigo ||
-          movEditando.proyecto === p.nombre
-      );
-      setProyectoCodigo(proyEnc ? proyEnc.codigo : proyectoFijoCodigo || '');
-      setClienteId(movEditando.cliente_id ? String(movEditando.cliente_id) : '');
-      setProveedorNombre(movEditando.proveedor || '');
+      const base = Number(movEditando.monto_base || 0);
+      const imp = Number(movEditando.importe ?? movEditando.monto ?? 0);
+      setImporteTexto(numATextoArg(base > 0 ? base : imp));
+      setValorUsdTexto(numATextoArg(Number(movEditando.valor_usd || 1450)));
+      setFecha(movEditando.fecha || hoyIso);
+      setEstado(movEditando.estado || 'Abonado');
+      setTipoComprobante(movEditando.tipo_comprobante || 'Factura C');
+      setComprobante(movEditando.comprobante || '');
+      setArchivoUrl(movEditando.archivo_url || '');
       setNotas(movEditando.notas || '');
-      setMostrarMasDatos(Boolean(movEditando.valor_usd || movEditando.importe_usd || monMov === 'ARS'));
-      setFechaConversion(movEditando.fecha_conversion || movEditando.fecha || hoy);
-      setValorUsd(
-        movEditando.valor_usd
-          ? Number(movEditando.valor_usd).toLocaleString('es-AR', {
-              minimumFractionDigits: Number(movEditando.valor_usd) % 1 === 0 ? 0 : 2,
-              maximumFractionDigits: 2,
-            })
-          : ''
+
+      const tieneCac = Number(movEditando.cac_valor_base || 0) > 0;
+      setAplicarCAC(tieneCac);
+      setCacMesBase(movEditando.cac_mes_base || serieCAC[0]?.periodo || 'OCT2026');
+      setCacValorBaseTexto(
+        numATextoArg(Number(movEditando.cac_valor_base || serieCAC[0]?.valor || 23884.2))
       );
-      setImporteUsd(
-        movEditando.importe_usd
-          ? Number(movEditando.importe_usd).toLocaleString('es-AR', {
-              minimumFractionDigits: 2,
-              maximumFractionDigits: 2,
-            })
-          : ''
+      setCacMesActual(movEditando.cac_mes_actual || serieCAC[0]?.periodo || 'OCT2026');
+      setCacValorActualTexto(
+        numATextoArg(Number(movEditando.cac_valor_actual || serieCAC[0]?.valor || 23884.2))
       );
     } else {
-      const proyBase = proyectos.find((p) => p.codigo === proyectoFijoCodigo);
+      const proyInit =
+        proyectos.find((p) => p.codigo === (proyectoFijoCodigo || proyectos[0]?.codigo)) || null;
+      const usaCacProy = proyInit?.redeterminacion_tipo === 'Índice CAC';
+
       setTipo('Ingreso');
-      setCategoria('Honorarios Proyecto');
-      setComprobante('');
+      setProyectoCodigo(proyInit?.codigo || '');
+      setCategoria('Certificación de Obra');
       setConcepto('');
-      setMoneda(monedaInicial);
-      setImporte('');
-      setTipoComprobante('Factura A');
+      setMoneda(usaCacProy ? 'ARS' : monedaInicial);
+      setImporteTexto('');
+      setValorUsdTexto('1.450');
+      setFecha(hoyIso);
       setEstado('Abonado');
+      setTipoComprobante('Factura C');
+      setComprobante('');
       setArchivoUrl('');
-      setArchivoNombre('');
-      setFormaPago('Transferencia');
-      setFecha(hoy);
-      setProyectoCodigo(proyectoFijoCodigo || '');
-      setClienteId(proyBase?.cliente_id ? String(proyBase.cliente_id) : '');
-      setProveedorNombre('');
       setNotas('');
-      setMostrarMasDatos(monedaInicial === 'ARS');
-      setFechaConversion(hoy);
-      setValorUsd('');
-      setImporteUsd('');
-      if (monedaInicial === 'ARS') {
-        consultarDolarBna(hoy, '');
-      }
+
+      setAplicarCAC(usaCacProy);
+      const mesB = proyInit?.cac_mes_base || serieCAC[0]?.periodo || 'OCT2026';
+      const valB =
+        Number(proyInit?.cac_valor_base || 0) ||
+        serieCAC.find((s) => s.periodo === mesB)?.valor ||
+        23884.2;
+      const ultimo = serieCAC[0] || { periodo: 'OCT2026', valor: 23884.2 };
+
+      setCacMesBase(mesB);
+      setCacValorBaseTexto(numATextoArg(valB));
+      setCacMesActual(ultimo.periodo);
+      setCacValorActualTexto(numATextoArg(ultimo.valor));
     }
-  }, [abierto, movEditando, proyectoFijoCodigo, monedaInicial]);
+  }, [abierto, movEditando, proyectoFijoCodigo]);
+
+  // Cálculo automático de Redeterminación CAC
+  const calculoCAC = useMemo(() => {
+    const montoBase = parsearNum(importeTexto);
+    const cacBase = parsearNum(cacValorBaseTexto);
+    const cacActual = parsearNum(cacValorActualTexto);
+
+    if (!aplicarCAC || tipo !== 'Ingreso' || moneda !== 'ARS' || cacBase <= 0 || cacActual <= 0) {
+      return {
+        montoBase,
+        coeficiente: 1,
+        diferenciaCac: 0,
+        totalAjustado: montoBase,
+      };
+    }
+
+    const coeficiente = cacActual / cacBase;
+    const totalAjustado = Math.round(montoBase * coeficiente * 100) / 100;
+    const diferenciaCac = Math.round((totalAjustado - montoBase) * 100) / 100;
+
+    return {
+      montoBase,
+      coeficiente,
+      diferenciaCac,
+      totalAjustado,
+    };
+  }, [aplicarCAC, tipo, moneda, importeTexto, cacValorBaseTexto, cacValorActualTexto]);
 
   if (!abierto || !montado) return null;
 
-  const cambiarTipoMovimiento = (nuevoTipo: 'Ingreso' | 'Egreso') => {
-    setTipo(nuevoTipo);
-    if (nuevoTipo === 'Ingreso') {
-      setCategoria('Honorarios Proyecto');
-      setEstado('Abonado');
-    } else {
-      setCategoria('Compras y Materiales de Obra');
-      setEstado('Resta abonar');
-    }
-  };
-
-  const seleccionarProyecto = (cod: string) => {
-    setProyectoCodigo(cod);
-    if (cod) {
-      const proy = proyectos.find((p) => p.codigo === cod);
-      if (proy?.cliente_id) {
-        setClienteId(String(proy.cliente_id));
-      }
-    }
-  };
-
-  const manejarAdjuntoPdf = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const archivo = e.target.files?.[0];
-    if (!archivo) return;
-
-    setSubiendoPdf(true);
-    setArchivoNombre(archivo.name);
-
+  const subirArchivo = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setSubiendoArchivo(true);
     try {
-      const ruta = `finanzas/${Date.now()}_${archivo.name.replace(/\s+/g, '_')}`;
-      const { error: upErr } = await supabase.storage
-        .from('comprobantes')
-        .upload(ruta, archivo, { upsert: true });
-
-      if (!upErr) {
-        const { data: pub } = supabase.storage.from('comprobantes').getPublicUrl(ruta);
-        setArchivoUrl(pub.publicUrl);
+      const ruta = `movimientos/${Date.now()}_${file.name.replace(/\s+/g, '_')}`;
+      const { error } = await supabase.storage
+        .from('documentos')
+        .upload(ruta, file, { upsert: true });
+      if (!error) {
+        const { data } = supabase.storage.from('documentos').getPublicUrl(ruta);
+        setArchivoUrl(data.publicUrl);
       } else {
         const reader = new FileReader();
         reader.onload = () => setArchivoUrl(String(reader.result || ''));
-        reader.readAsDataURL(archivo);
+        reader.readAsDataURL(file);
       }
-    } catch {
-      const reader = new FileReader();
-      reader.onload = () => setArchivoUrl(String(reader.result || ''));
-      reader.readAsDataURL(archivo);
     } finally {
-      setSubiendoPdf(false);
-    }
-
-    if (archivo.type === 'application/pdf' || archivo.name.toLowerCase().endsWith('.pdf')) {
-      setLeyendoPdf(true);
-      const extraido = await extraerDatosFacturaPdf(archivo);
-      setLeyendoPdf(false);
-
-      const nuevoImporte = extraido.importe || importe;
-      const nuevaFecha = extraido.fechaDetectada || fecha;
-
-      if (extraido.importe) setImporte(extraido.importe);
-      if (extraido.nroFactura) setComprobante(extraido.nroFactura);
-      if (extraido.fechaDetectada) {
-        setFecha(extraido.fechaDetectada);
-        setFechaConversion(extraido.fechaDetectada);
-      }
-      if (!concepto.trim() && extraido.conceptoSugerido) {
-        setConcepto(extraido.conceptoSugerido);
-      }
-
-      if (moneda === 'ARS') {
-        setMostrarMasDatos(true);
-        await consultarDolarBna(nuevaFecha, nuevoImporte);
-      }
-    }
-  };
-
-  const abrirArchivoAdjunto = (url: string) => {
-    if (!url) return;
-    if (url.startsWith('data:')) {
-      const win = window.open();
-      if (win) {
-        win.document.write(
-          `<iframe src="${url}" frameborder="0" style="border:0;width:100%;height:100vh;" allowfullscreen></iframe>`
-        );
-      }
-    } else {
-      window.open(url, '_blank', 'noopener,noreferrer');
+      setSubiendoArchivo(false);
     }
   };
 
   const guardarMovimiento = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (cargando) return;
     setCargando(true);
 
-    const proy = proyectos.find((p) => p.codigo === proyectoCodigo);
-    const etiquetaProyecto = proy ? `${proy.codigo} · ${proy.nombre}` : 'General';
-    const impNum = parsearNumero(importe);
-    const cotNum = parsearNumero(valorUsd);
-    const impUsdNum =
-      moneda === 'USD'
-        ? impNum
-        : parsearNumero(importeUsd) || (cotNum > 0 ? Number((impNum / cotNum).toFixed(2)) : 0);
+    try {
+      const cotUsd = parsearNum(valorUsdTexto) || 1450;
+      const importeFinal = calculoCAC.totalAjustado;
+      const importeUsd = moneda === 'USD' ? importeFinal : importeFinal / cotUsd;
+      const proy = proyectos.find((p) => p.codigo === proyectoCodigo);
 
-    const datos = {
-      fecha,
-      tipo,
-      categoria:
-        categoria.trim() ||
-        (tipo === 'Ingreso' ? 'Honorarios Proyecto' : 'Compras y Materiales de Obra'),
-      comprobante: comprobante.trim() || null,
-      tipo_comprobante: tipoComprobante,
-      concepto: concepto.trim(),
-      moneda,
-      importe: impNum,
-      monto: impNum,
-      estado,
-      proyecto: etiquetaProyecto,
-      proyecto_codigo: proy?.codigo || null,
-      proyecto_nombre: proy?.nombre || null,
-      cliente_id: clienteId ? Number(clienteId) : proy?.cliente_id || null,
-      proveedor: proveedorNombre || null,
-      forma_pago: formaPago,
-      archivo_url: archivoUrl || null,
-      archivo_nombre: archivoNombre || null,
-      notas: notas.trim() || null,
-      fecha_conversion: fechaConversion || fecha,
-      valor_usd: cotNum || null,
-      importe_usd: impUsdNum || null,
-    };
+      const usaCacReal = aplicarCAC && tipo === 'Ingreso' && moneda === 'ARS';
 
-    const { error } = movEditando
-      ? await supabase.from('movimientos').update(datos).eq('id', movEditando.id)
-      : await supabase.from('movimientos').insert([datos]);
+      const payload: Record<string, any> = {
+        tipo,
+        proyecto_codigo: proy?.codigo || proyectoCodigo || null,
+        proyecto_nombre: proy?.nombre || null,
+        categoria,
+        concepto: concepto.trim(),
+        moneda,
+        importe: importeFinal,
+        monto: importeFinal,
+        monto_base: calculoCAC.montoBase,
+        diferencia_cac: usaCacReal ? calculoCAC.diferenciaCac : 0,
+        cac_mes_base: usaCacReal ? cacMesBase : null,
+        cac_valor_base: usaCacReal ? parsearNum(cacValorBaseTexto) : 0,
+        cac_mes_actual: usaCacReal ? cacMesActual : null,
+        cac_valor_actual: usaCacReal ? parsearNum(cacValorActualTexto) : 0,
+        valor_usd: cotUsd,
+        importe_usd: Math.round(importeUsd * 100) / 100,
+        fecha,
+        estado,
+        tipo_comprobante: tipoComprobante,
+        comprobante: comprobante.trim() || null,
+        archivo_url: archivoUrl.trim() || null,
+        notas: notas.trim() || null,
+      };
 
-    setCargando(false);
+      const { error } = movEditando
+        ? await supabase.from('movimientos').update(payload).eq('id', movEditando.id)
+        : await supabase.from('movimientos').insert([payload]);
 
-    if (!error) {
+      if (error) {
+        alert('Error al guardar movimiento: ' + error.message);
+        return;
+      }
+
       onClose();
       onGuardado(
         movEditando
-          ? 'Movimiento actualizado'
-          : proy
-          ? `Movimiento registrado y vinculado a ${proy.nombre}`
-          : 'Movimiento financiero registrado',
-        moneda
+          ? 'Movimiento actualizado correctamente'
+          : usaCacReal
+          ? 'Ingreso con redeterminación CAC registrado'
+          : 'Movimiento registrado correctamente'
       );
-    } else {
-      alert('Error al guardar movimiento: ' + error.message);
+    } catch (err: any) {
+      alert('Error inesperado: ' + (err?.message || 'Sin conexión'));
+    } finally {
+      setCargando(false);
     }
   };
 
@@ -375,446 +290,381 @@ export default function ModalMovimientoFinanciero({
     if (!movEditando) return;
     setCargando(true);
     try {
-      const val = Number(movEditando.importe ?? 0) || Number(movEditando.monto ?? 0);
-      const mon = (movEditando.moneda || moneda).toUpperCase();
       await moverAPapelera({
         tabla: 'movimientos',
         modulo: 'Finanzas',
-        titulo: movEditando.concepto || 'Movimiento sin concepto',
-        subtitulo: `${movEditando.tipo || ''} · ${mon} $${val.toLocaleString('es-AR')} ${
-          movEditando.proyecto ? `· ${movEditando.proyecto}` : ''
-        }`.trim(),
+        titulo: movEditando.concepto || 'Movimiento financiero',
+        subtitulo: `${movEditando.moneda || 'ARS'} $${Number(movEditando.importe || 0).toLocaleString(
+          'es-AR'
+        )}`,
         registro: movEditando,
       });
       onClose();
       onGuardado('Movimiento enviado a papelera');
-    } catch (error: any) {
-      alert('Error al mover a papelera: ' + error.message);
+    } catch (err: any) {
+      alert('Error al eliminar: ' + err.message);
     } finally {
       setCargando(false);
     }
   };
 
   return createPortal(
-    <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-[9999] p-4">
-      <div className="bg-[#1A1A1A] rounded-2xl border border-gray-800 w-full max-w-2xl shadow-2xl overflow-hidden flex flex-col max-h-[92vh]">
-        <div className="px-6 pt-6 pb-4 flex justify-between items-start border-b border-gray-800">
+    <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-[9999] p-4 backdrop-blur-sm">
+      <div className="bg-[#1A1A1A] border border-gray-800 rounded-2xl w-full max-w-2xl shadow-2xl overflow-hidden flex flex-col max-h-[92vh]">
+        <div className="px-6 pt-5 pb-4 border-b border-gray-800 flex justify-between items-center">
           <div>
             <h2 className="text-lg font-bold text-white">
-              {movEditando ? 'Detalle del Movimiento Financiero' : 'Nuevo Movimiento Financiero'}
+              {movEditando ? 'Editar Movimiento Financiero' : 'Registrar Movimiento Financiero'}
             </h2>
             <p className="text-xs text-gray-400 mt-0.5">
-              Registro multimoneda de honorarios, cobros y gastos
+              Cobros de honorarios, certificaciones con redeterminación CAC y gastos de obra
             </p>
           </div>
-          <button onClick={onClose} className="text-gray-400 hover:text-white cursor-pointer">
+          <button
+            type="button"
+            onClick={onClose}
+            className="text-gray-400 hover:text-white cursor-pointer"
+          >
             <X className="w-5 h-5" />
           </button>
         </div>
 
         <form onSubmit={guardarMovimiento} className="px-6 py-5 overflow-y-auto space-y-4">
-          <div className="grid grid-cols-2 bg-[#121212] border border-gray-800 rounded-xl p-1 gap-1">
-            <button
-              type="button"
-              onClick={() => cambiarTipoMovimiento('Ingreso')}
-              className={`py-2 rounded-lg text-xs font-extrabold transition-all cursor-pointer ${
-                tipo === 'Ingreso'
-                  ? 'bg-emerald-500 text-black shadow'
-                  : 'text-gray-400 hover:text-white'
-              }`}
-            >
-              + Ingreso / Honorario
-            </button>
-            <button
-              type="button"
-              onClick={() => cambiarTipoMovimiento('Egreso')}
-              className={`py-2 rounded-lg text-xs font-extrabold transition-all cursor-pointer ${
-                tipo === 'Egreso'
-                  ? 'bg-rose-500 text-white shadow'
-                  : 'text-gray-400 hover:text-white'
-              }`}
-            >
-              − Egreso / Costo
-            </button>
+          <div className="grid grid-cols-2 gap-2 bg-[#121212] p-1 rounded-xl border border-gray-800">
+            {(['Ingreso', 'Egreso'] as const).map((t) => (
+              <button
+                key={t}
+                type="button"
+                onClick={() => {
+                  setTipo(t);
+                  if (t === 'Egreso') setAplicarCAC(false);
+                }}
+                className={`py-2 rounded-lg text-xs font-extrabold cursor-pointer transition-colors ${
+                  tipo === t
+                    ? t === 'Ingreso'
+                      ? 'bg-emerald-600 text-white'
+                      : 'bg-rose-600 text-white'
+                    : 'text-gray-400 hover:text-white'
+                }`}
+              >
+                {t === 'Ingreso' ? '+ Ingreso / Cobro' : '- Egreso / Gasto'}
+              </button>
+            ))}
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div>
-              <label className="block text-xs font-semibold text-gray-300 mb-1.5">Categoría</label>
+              <label className="block text-xs font-semibold text-gray-300 mb-1">
+                Proyecto / Obra
+              </label>
               <select
-                value={categoria}
-                onChange={(e) => setCategoria(e.target.value)}
-                className="w-full bg-[#121212] border border-gray-700/80 rounded-lg px-3 py-2.5 text-sm text-white"
+                value={proyectoCodigo}
+                disabled={Boolean(proyectoFijoCodigo)}
+                onChange={(e) => {
+                  const cod = e.target.value;
+                  setProyectoCodigo(cod);
+                  const pr = proyectos.find((p) => p.codigo === cod);
+                  if (pr?.redeterminacion_tipo === 'Índice CAC' && tipo === 'Ingreso') {
+                    setMoneda('ARS');
+                    setAplicarCAC(true);
+                    if (pr.cac_mes_base) setCacMesBase(pr.cac_mes_base);
+                    if (Number(pr.cac_valor_base || 0) > 0) {
+                      setCacValorBaseTexto(numATextoArg(Number(pr.cac_valor_base)));
+                    }
+                  }
+                }}
+                className="w-full bg-[#121212] border border-gray-800 rounded-lg px-3 py-2 text-xs text-white"
               >
-                {(tipo === 'Ingreso' ? CATEGORIAS_INGRESO : CATEGORIAS_EGRESO).map((cat) => (
-                  <option key={cat} value={cat}>
-                    {cat}
+                <option value="">General del Estudio</option>
+                {proyectos.map((p) => (
+                  <option key={p.codigo} value={p.codigo}>
+                    {p.codigo} · {p.nombre}
                   </option>
                 ))}
               </select>
             </div>
 
             <div>
-              <label className="block text-xs font-semibold text-gray-300 mb-1.5">
-                Nro. Factura / Recibo
-              </label>
+              <label className="block text-xs font-semibold text-gray-300 mb-1">Categoría</label>
               <input
                 type="text"
-                value={comprobante}
-                onChange={(e) => setComprobante(e.target.value)}
-                placeholder="Ej. FAC-A-0003-00189"
-                className="w-full bg-[#121212] border border-gray-700/80 rounded-lg px-3 py-2.5 text-sm text-white placeholder-gray-500"
+                value={categoria}
+                onChange={(e) => setCategoria(e.target.value)}
+                className="w-full bg-[#121212] border border-gray-800 rounded-lg px-3 py-2 text-xs text-white"
               />
             </div>
           </div>
 
           <div>
-            <label className="block text-xs font-semibold text-gray-300 mb-1.5">
-              Concepto / Detalle *
-            </label>
+            <label className="block text-xs font-semibold text-gray-300 mb-1">Concepto *</label>
             <input
               type="text"
               required
               value={concepto}
               onChange={(e) => setConcepto(e.target.value)}
-              placeholder="Ej. Certificación #02 Proyecto Ejecutivo Casa Terrazas"
-              className="w-full bg-[#121212] border border-gray-700/80 rounded-lg px-3 py-2.5 text-sm text-white placeholder-gray-500"
+              placeholder="Ej. Certificación N° 1 · Octubre 2026"
+              className="w-full bg-[#121212] border border-gray-800 rounded-lg px-3 py-2 text-xs text-white"
             />
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
             <div>
-              <label className="block text-xs font-semibold text-gray-300 mb-1.5">Moneda *</label>
-              <select
-                value={moneda}
-                onChange={(e) => {
-                  const m = e.target.value as 'USD' | 'ARS';
-                  setMoneda(m);
-                  if (m === 'ARS') {
-                    setMostrarMasDatos(true);
-                    consultarDolarBna(fechaConversion || fecha, importe);
-                  }
-                }}
-                className="w-full bg-[#121212] border border-gray-700/80 rounded-lg px-3 py-2.5 text-sm text-white"
-              >
-                <option value="USD">USD</option>
-                <option value="ARS">ARS</option>
-              </select>
+              <label className="block text-xs font-semibold text-gray-300 mb-1">
+                {aplicarCAC && tipo === 'Ingreso' && moneda === 'ARS'
+                  ? 'Monto Base Original *'
+                  : 'Moneda e Importe *'}
+              </label>
+              <div className="flex gap-1.5">
+                <select
+                  value={moneda}
+                  onChange={(e) => setMoneda(e.target.value as 'ARS' | 'USD')}
+                  className="bg-[#121212] border border-gray-800 rounded-lg px-2.5 py-2 text-xs font-extrabold text-white"
+                >
+                  <option value="ARS">ARS</option>
+                  <option value="USD">USD</option>
+                </select>
+                <input
+                  type="text"
+                  required
+                  value={importeTexto}
+                  onChange={(e) => setImporteTexto(formatearMilesDecimales(e.target.value))}
+                  placeholder="Ej. 15.000.000,00"
+                  className="w-full bg-[#121212] border border-gray-800 rounded-lg px-3 py-2 text-xs font-bold text-white"
+                />
+              </div>
             </div>
 
             <div>
-              <label className="block text-xs font-semibold text-gray-300 mb-1.5">Importe *</label>
+              <label className="block text-xs font-semibold text-gray-300 mb-1">
+                Cotización USD
+              </label>
               <input
                 type="text"
-                required
-                value={importe}
-                onChange={(e) => {
-                  setImporte(e.target.value);
-                  recalcularImporteUsd(e.target.value, valorUsd);
-                }}
-                placeholder="0,00"
-                className="w-full bg-[#121212] border border-gray-700/80 rounded-lg px-3 py-2.5 text-sm text-white font-semibold"
+                value={valorUsdTexto}
+                onChange={(e) => setValorUsdTexto(formatearMilesDecimales(e.target.value))}
+                className="w-full bg-[#121212] border border-gray-800 rounded-lg px-3 py-2 text-xs text-white"
               />
             </div>
 
             <div>
-              <label className="block text-xs font-semibold text-gray-300 mb-1.5">
-                Comprobante
-              </label>
-              <select
-                value={tipoComprobante}
-                onChange={(e) => setTipoComprobante(e.target.value)}
-                className="w-full bg-[#121212] border border-gray-700/80 rounded-lg px-3 py-2.5 text-sm text-white"
-              >
-                <option value="Factura A">Factura A</option>
-                <option value="Factura B">Factura B</option>
-                <option value="Factura C">Factura C</option>
-                <option value="Recibo">Recibo</option>
-                <option value="Remito">Remito</option>
-              </select>
-            </div>
-          </div>
-
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div>
-              <label className="block text-xs font-semibold text-gray-300 mb-1.5">
-                Archivo PDF del Comprobante
-              </label>
-              <label className="border border-dashed border-[#EAB308]/60 hover:border-[#EAB308] bg-[#EAB308]/5 rounded-lg px-3 py-2.5 flex items-center justify-center gap-2 text-xs font-bold text-[#EAB308] cursor-pointer transition-colors">
-                {leyendoPdf || subiendoPdf ? (
-                  <>
-                    <Loader2 className="w-4 h-4 animate-spin" />
-                    <span>{leyendoPdf ? 'Leyendo PDF...' : 'Subiendo...'}</span>
-                  </>
-                ) : (
-                  <>
-                    <Upload className="w-4 h-4" />
-                    <span className="truncate">{archivoNombre || 'Cargar archivo PDF'}</span>
-                  </>
-                )}
-                <input
-                  type="file"
-                  accept=".pdf,image/*"
-                  onChange={manejarAdjuntoPdf}
-                  className="hidden"
-                />
-              </label>
-              {archivoUrl && (
-                <div className="flex items-center justify-between text-[11px] mt-1.5 px-1">
-                  <button
-                    type="button"
-                    onClick={() => abrirArchivoAdjunto(archivoUrl)}
-                    className="text-blue-400 hover:underline inline-flex items-center gap-1 cursor-pointer"
-                  >
-                    <FileText className="w-3 h-3" /> Ver comprobante
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setArchivoUrl('');
-                      setArchivoNombre('');
-                    }}
-                    className="text-rose-400 hover:underline cursor-pointer"
-                  >
-                    Quitar
-                  </button>
-                </div>
-              )}
-            </div>
-
-            <div>
-              <label className="block text-xs font-semibold text-gray-300 mb-1.5">
-                Forma de pago
-              </label>
-              <select
-                value={formaPago}
-                onChange={(e) => setFormaPago(e.target.value)}
-                className="w-full bg-[#121212] border border-gray-700/80 rounded-lg px-3 py-2.5 text-sm text-white"
-              >
-                <option value="Transferencia">Transferencia</option>
-                <option value="Efectivo">Efectivo</option>
-                <option value="Cheque / E-Cheq">Cheque / E-Cheq</option>
-                <option value="Tarjeta de Crédito / Débito">Tarjeta de Crédito / Débito</option>
-                <option value="Cuenta Corriente">Cuenta Corriente</option>
-              </select>
-            </div>
-          </div>
-
-          <div className="bg-[#141414] border border-gray-800 rounded-xl p-3.5 space-y-3">
-            <button
-              type="button"
-              onClick={() => setMostrarMasDatos(!mostrarMasDatos)}
-              className="w-full flex items-center justify-between text-xs font-bold text-white cursor-pointer"
-            >
-              <span>
-                {mostrarMasDatos ? '−' : '+'} Más datos (opcional){' '}
-                <span className="text-gray-400 font-normal">
-                  conversión ARS a USD: fecha de cobro, valor USD e importe USD
-                </span>
-              </span>
-            </button>
-
-            {mostrarMasDatos && (
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-3 pt-1">
-                <div>
-                  <label className="block text-[11px] font-semibold text-gray-300 mb-1">
-                    Fecha de cobro
-                  </label>
-                  <input
-                    type="date"
-                    value={fechaConversion}
-                    onChange={(e) => {
-                      setFechaConversion(e.target.value);
-                      consultarDolarBna(e.target.value, importe);
-                    }}
-                    className="w-full bg-[#121212] border border-gray-800 rounded-lg px-3 py-2 text-xs text-white [color-scheme:dark]"
-                  />
-                </div>
-
-                <div>
-                  <div className="flex items-center justify-between mb-1">
-                    <label className="block text-[11px] font-semibold text-gray-300">
-                      Valor USD
-                    </label>
-                    <button
-                      type="button"
-                      onClick={() => consultarDolarBna(fechaConversion || fecha, importe)}
-                      disabled={consultandoBna}
-                      className="text-[10px] font-bold text-[#EAB308] hover:underline inline-flex items-center gap-1 cursor-pointer"
-                    >
-                      <RefreshCw
-                        className={`w-2.5 h-2.5 ${consultandoBna ? 'animate-spin' : ''}`}
-                      />
-                      Traer BNA
-                    </button>
-                  </div>
-                  <input
-                    type="text"
-                    value={valorUsd}
-                    onChange={(e) => {
-                      const f = formatearMiles(e.target.value);
-                      setValorUsd(f);
-                      recalcularImporteUsd(importe, f);
-                    }}
-                    placeholder="Ej. 1.430"
-                    className="w-full bg-[#121212] border border-gray-800 rounded-lg px-3 py-2 text-xs text-white font-semibold"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-[11px] font-semibold text-gray-300 mb-1">
-                    Importe USD
-                  </label>
-                  <input
-                    type="text"
-                    value={importeUsd}
-                    readOnly
-                    placeholder="0,00"
-                    className="w-full bg-[#121212] border border-[#EAB308]/40 rounded-lg px-3 py-2 text-xs font-extrabold text-[#EAB308]"
-                  />
-                </div>
-              </div>
-            )}
-          </div>
-
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div>
-              <label className="block text-xs font-semibold text-gray-300 mb-1.5">Fecha *</label>
+              <label className="block text-xs font-semibold text-gray-300 mb-1">Fecha *</label>
               <input
                 type="date"
                 required
                 value={fecha}
-                onChange={(e) => {
-                  setFecha(e.target.value);
-                  setFechaConversion(e.target.value);
-                  if (moneda === 'ARS') consultarDolarBna(e.target.value, importe);
-                }}
-                className="w-full bg-[#121212] border border-gray-700/80 rounded-lg px-3 py-2.5 text-sm text-white [color-scheme:dark]"
+                onChange={(e) => setFecha(e.target.value)}
+                className="w-full bg-[#121212] border border-gray-800 rounded-lg px-3 py-2 text-xs text-white [color-scheme:dark]"
               />
-            </div>
-
-            <div>
-              <label className="block text-xs font-semibold text-gray-300 mb-1.5">
-                Corresponde al Proyecto (Opcional)
-              </label>
-              <select
-                value={proyectoCodigo}
-                onChange={(e) => seleccionarProyecto(e.target.value)}
-                disabled={Boolean(proyectoFijoCodigo)}
-                className="w-full bg-[#121212] border border-gray-700/80 rounded-lg px-3 py-2.5 text-sm text-white disabled:opacity-90"
-              >
-                {!proyectoFijoCodigo && (
-                  <option value="">General (Sin proyecto específico)</option>
-                )}
-                {proyectos.map((p) => (
-                  <option key={p.codigo} value={p.codigo}>
-                    {p.codigo} · {p.nombre} ({p.estado || 'En Diseño'})
-                  </option>
-                ))}
-              </select>
             </div>
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            <div>
-              <label className="block text-xs font-semibold text-gray-300 mb-1.5">
-                Cliente (Opcional)
+          {/* MÓDULO DE REDETERMINACIÓN POR ÍNDICE CAC PARA INGRESOS EN ARS */}
+          {tipo === 'Ingreso' && moneda === 'ARS' && (
+            <div className="bg-[#141414] border border-gray-800 rounded-xl p-4 space-y-3">
+              <label className="flex items-center justify-between cursor-pointer">
+                <div className="flex items-center gap-2">
+                  <Calculator className="w-4 h-4 text-[#EAB308]" />
+                  <div>
+                    <div className="text-xs font-bold text-white">
+                      Ajuste por Redeterminación · Índice CAC (CAMARCO)
+                    </div>
+                    <div className="text-[11px] text-gray-400">
+                      Calcula automáticamente la diferencia entre el índice cerrado y el índice actual
+                    </div>
+                  </div>
+                </div>
+                <input
+                  type="checkbox"
+                  checked={aplicarCAC}
+                  onChange={(e) => setAplicarCAC(e.target.checked)}
+                  className="w-4 h-4 accent-[#EAB308] cursor-pointer"
+                />
               </label>
-              <select
-                value={clienteId}
-                onChange={(e) => setClienteId(e.target.value)}
-                className="w-full bg-[#121212] border border-gray-700/80 rounded-lg px-3 py-2.5 text-sm text-white"
-              >
-                <option value="">Ninguno</option>
-                {clientes.map((c) => (
-                  <option key={c.id} value={c.id}>
-                    {c.codigo ? `${c.codigo} - ` : ''}
-                    {c.nombre}
-                  </option>
-                ))}
-              </select>
-            </div>
 
-            <div>
-              <label className="block text-xs font-semibold text-gray-300 mb-1.5">
-                Proveedor / Asesor (Opcional)
-              </label>
-              <select
-                value={proveedorNombre}
-                onChange={(e) => setProveedorNombre(e.target.value)}
-                className="w-full bg-[#121212] border border-gray-700/80 rounded-lg px-3 py-2.5 text-sm text-white"
-              >
-                <option value="">Ninguno</option>
-                {proveedores.map((prov) => (
-                  <option key={prov.id} value={prov.nombre}>
-                    {prov.nombre}
-                  </option>
-                ))}
-              </select>
-            </div>
+              {aplicarCAC && (
+                <div className="pt-3 border-t border-gray-800 space-y-3">
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    <div className="bg-[#121212] border border-gray-800 rounded-lg p-3 space-y-2">
+                      <div className="text-[11px] font-bold text-gray-300">
+                        1. Índice CAC Cerrado (Base)
+                      </div>
+                      <select
+                        value={cacMesBase}
+                        onChange={(e) => {
+                          setCacMesBase(e.target.value);
+                          const f = serieCAC.find((s) => s.periodo === e.target.value);
+                          if (f) setCacValorBaseTexto(numATextoArg(f.valor));
+                        }}
+                        className="w-full bg-[#181818] border border-gray-700 rounded-lg px-2.5 py-1.5 text-xs text-white"
+                      >
+                        {serieCAC.map((s) => (
+                          <option key={s.periodo} value={s.periodo}>
+                            {s.periodo} · {s.etiqueta}
+                          </option>
+                        ))}
+                      </select>
+                      <input
+                        type="text"
+                        value={cacValorBaseTexto}
+                        onChange={(e) =>
+                          setCacValorBaseTexto(formatearMilesDecimales(e.target.value))
+                        }
+                        className="w-full bg-[#181818] border border-gray-700 rounded-lg px-2.5 py-1.5 text-xs font-bold text-white"
+                      />
+                    </div>
 
+                    <div className="bg-[#121212] border border-gray-800 rounded-lg p-3 space-y-2">
+                      <div className="text-[11px] font-bold text-gray-300">
+                        2. Índice CAC Actual (Certificación)
+                      </div>
+                      <select
+                        value={cacMesActual}
+                        onChange={(e) => {
+                          setCacMesActual(e.target.value);
+                          const f = serieCAC.find((s) => s.periodo === e.target.value);
+                          if (f) setCacValorActualTexto(numATextoArg(f.valor));
+                        }}
+                        className="w-full bg-[#181818] border border-gray-700 rounded-lg px-2.5 py-1.5 text-xs text-white"
+                      >
+                        {serieCAC.map((s) => (
+                          <option key={s.periodo} value={s.periodo}>
+                            {s.periodo} · {s.etiqueta}
+                          </option>
+                        ))}
+                      </select>
+                      <input
+                        type="text"
+                        value={cacValorActualTexto}
+                        onChange={(e) =>
+                          setCacValorActualTexto(formatearMilesDecimales(e.target.value))
+                        }
+                        className="w-full bg-[#181818] border border-gray-700 rounded-lg px-2.5 py-1.5 text-xs font-bold text-[#EAB308]"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-3 gap-2 bg-[#121212] border border-gray-800 rounded-lg p-3 text-xs">
+                    <div>
+                      <div className="text-[10px] text-gray-400">Monto Base</div>
+                      <div className="font-bold text-white mt-0.5">
+                        ARS ${calculoCAC.montoBase.toLocaleString('es-AR', { minimumFractionDigits: 2 })}
+                      </div>
+                    </div>
+                    <div>
+                      <div className="text-[10px] text-gray-400">
+                        Diferencia CAC ({((calculoCAC.coeficiente - 1) * 100).toFixed(2)}%)
+                      </div>
+                      <div className="font-bold text-[#EAB308] mt-0.5">
+                        + ARS $
+                        {calculoCAC.diferenciaCac.toLocaleString('es-AR', {
+                          minimumFractionDigits: 2,
+                        })}
+                      </div>
+                    </div>
+                    <div>
+                      <div className="text-[10px] text-gray-400">Total Redeterminado</div>
+                      <div className="font-extrabold text-emerald-400 mt-0.5">
+                        ARS $
+                        {calculoCAC.totalAjustado.toLocaleString('es-AR', {
+                          minimumFractionDigits: 2,
+                        })}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
             <div>
-              <label className="block text-xs font-semibold text-gray-300 mb-1.5">Estado</label>
+              <label className="block text-xs font-semibold text-gray-300 mb-1">Estado</label>
               <select
                 value={estado}
                 onChange={(e) => setEstado(e.target.value)}
-                className="w-full bg-[#121212] border border-gray-700/80 rounded-lg px-3 py-2.5 text-sm text-white"
+                className="w-full bg-[#121212] border border-gray-800 rounded-lg px-3 py-2 text-xs text-white"
               >
                 <option value="Abonado">Abonado</option>
                 <option value="Resta abonar">Resta abonar</option>
-                <option value="Cobrado">Cobrado</option>
-                <option value="Facturado">Facturado</option>
-                <option value="Pendiente">Pendiente</option>
-                <option value="Finalizado">Finalizado</option>
               </select>
+            </div>
+            <div>
+              <label className="block text-xs font-semibold text-gray-300 mb-1">
+                Tipo Comprobante
+              </label>
+              <select
+                value={tipoComprobante}
+                onChange={(e) => setTipoComprobante(e.target.value)}
+                className="w-full bg-[#121212] border border-gray-800 rounded-lg px-3 py-2 text-xs text-white"
+              >
+                <option value="Factura C">Factura C</option>
+                <option value="Factura A">Factura A</option>
+                <option value="Recibo">Recibo</option>
+                <option value="Certificado">Certificado</option>
+              </select>
+            </div>
+            <div>
+              <label className="block text-xs font-semibold text-gray-300 mb-1">
+                N° Comprobante
+              </label>
+              <input
+                type="text"
+                value={comprobante}
+                onChange={(e) => setComprobante(e.target.value)}
+                className="w-full bg-[#121212] border border-gray-800 rounded-lg px-3 py-2 text-xs text-white"
+              />
             </div>
           </div>
 
-          <div>
-            <label className="block text-xs font-semibold text-gray-300 mb-1.5">
-              Notas / Observaciones
+          <div className="flex flex-wrap items-center gap-2">
+            <label className="bg-[#121212] border border-gray-800 hover:border-[#EAB308] px-3 py-2 rounded-lg text-xs font-bold text-gray-200 inline-flex items-center gap-1.5 cursor-pointer">
+              {subiendoArchivo ? (
+                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+              ) : (
+                <Upload className="w-3.5 h-3.5 text-[#EAB308]" />
+              )}
+              <span>Adjuntar PDF / Comprobante</span>
+              <input type="file" onChange={subirArchivo} className="hidden" />
             </label>
-            <textarea
-              rows={2}
-              value={notas}
-              onChange={(e) => setNotas(e.target.value)}
-              placeholder="Medio de pago, cuenta bancaria, cuotas o aclaraciones..."
-              className="w-full bg-[#121212] border border-gray-700/80 rounded-lg px-3 py-2.5 text-sm text-white placeholder-gray-500 resize-none"
-            />
+            <div className="flex-1 min-w-[200px] flex items-center gap-1.5">
+              <Link2 className="w-3.5 h-3.5 text-gray-400" />
+              <input
+                type="text"
+                value={archivoUrl}
+                onChange={(e) => setArchivoUrl(e.target.value)}
+                placeholder="O pegar URL de Drive..."
+                className="w-full bg-[#121212] border border-gray-800 rounded-lg px-3 py-2 text-xs text-white"
+              />
+            </div>
           </div>
 
-          <div className="flex justify-between items-center pt-3 border-t border-gray-800/80">
+          <div className="flex justify-between items-center pt-3 border-t border-gray-800">
             <div>
               {movEditando && (
                 <button
                   type="button"
                   onClick={eliminarMovimiento}
                   disabled={cargando}
-                  className="text-red-500 hover:bg-red-500/15 px-3.5 py-2 rounded-lg text-xs font-semibold inline-flex items-center gap-1.5 cursor-pointer"
+                  className="text-rose-400 hover:text-rose-300 text-xs font-semibold inline-flex items-center gap-1.5 cursor-pointer"
                 >
-                  <Trash2 className="w-4 h-4" /> Enviar a papelera
+                  <Trash2 className="w-3.5 h-3.5" /> Enviar a papelera
                 </button>
               )}
             </div>
-
-            <div className="flex items-center gap-3">
+            <div className="flex items-center gap-2">
               <button
                 type="button"
                 onClick={onClose}
-                className="text-gray-300 hover:text-white px-4 py-2 rounded-lg text-xs font-semibold cursor-pointer"
+                className="px-4 py-2 rounded-lg text-xs text-gray-300 hover:text-white cursor-pointer"
               >
                 Cancelar
               </button>
               <button
                 type="submit"
                 disabled={cargando}
-                className="bg-[#EAB308] hover:bg-[#CA9A04] text-black px-5 py-2.5 rounded-lg font-bold text-xs cursor-pointer"
+                className="bg-[#EAB308] hover:bg-[#CA9A04] text-black px-5 py-2 rounded-lg text-xs font-bold cursor-pointer disabled:opacity-50"
               >
-                {cargando
-                  ? 'Guardando...'
-                  : movEditando
-                  ? 'Guardar Cambios'
-                  : 'Registrar Movimiento'}
+                {cargando ? 'Guardando...' : 'Guardar Movimiento'}
               </button>
             </div>
           </div>

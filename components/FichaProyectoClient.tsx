@@ -37,6 +37,7 @@ import {
   Check,
   Tag,
   Camera,
+  RefreshCw,
 } from 'lucide-react';
 
 const ETAPAS_PROYECTO = [
@@ -45,8 +46,41 @@ const ETAPAS_PROYECTO = [
   'Proyecto Ejecutivo y Detalles',
   'Presupuesto y Compras',
   'Dirección y Ejecución de Obra',
-  'Entrega y Post-Obra',
+  'Entrega Final',
 ];
+
+function formatearMilesDecimalesInput(valorCrudo: string): string {
+  const limpio = valorCrudo.replace(/[^\d,]/g, '');
+  if (!limpio) return '';
+  const partes = limpio.split(',');
+  const enteros = partes[0].replace(/^0+(?=\d)/, '');
+  const conPuntos = enteros.replace(/\B(?=(\d{3})+(?!\d))/g, '.');
+  if (partes.length > 1) {
+    return `${conPuntos || '0'},${partes[1].slice(0, 2)}`;
+  }
+  return conPuntos;
+}
+
+function parsearNumeroArg(valorFormateado: string | number): number {
+  if (typeof valorFormateado === 'number') return valorFormateado;
+  const s = String(valorFormateado || '').trim();
+  if (!s) return 0;
+  if (s.includes(',')) {
+    return parseFloat(s.replace(/\./g, '').replace(',', '.')) || 0;
+  }
+  const puntos = (s.match(/\./g) || []).length;
+  if (puntos > 1) return parseFloat(s.replace(/\./g, '')) || 0;
+  return parseFloat(s) || 0;
+}
+
+function numeroAInputArg(n: number | string | null | undefined): string {
+  const num = Number(n || 0);
+  if (!num) return '';
+  return num.toLocaleString('es-AR', {
+    minimumFractionDigits: num % 1 === 0 ? 0 : 2,
+    maximumFractionDigits: 2,
+  });
+}
 
 export default function FichaProyectoClient({
   proyecto,
@@ -75,13 +109,22 @@ export default function FichaProyectoClient({
   // Estado local del proyecto para reflejar cambios al instante
   const [datosProyectoLocal, setDatosProyectoLocal] = useState<any>(proyecto);
 
+  const etapaNormalizadaInit =
+    proyecto.etapa === 'Entrega y Post-Obra' || proyecto.etapa_actual === 'Entrega y Post-Obra'
+      ? 'Entrega Final'
+      : proyecto.etapa_actual || proyecto.etapa || 'Relevamiento y Concepto';
+
   const [pestanaActiva, setPestanaActiva] = useState<
     'resumen' | 'tareas' | 'visitas' | 'documentos' | 'compras' | 'finanzas' | 'comentarios'
   >('resumen');
-  const [estadoProyecto, setEstadoProyecto] = useState(proyecto.estado || 'En Diseño');
-  const [etapaActual, setEtapaActual] = useState(
-    proyecto.etapa_actual || proyecto.etapa || 'Relevamiento y Concepto'
+  const [estadoProyecto, setEstadoProyecto] = useState(
+    etapaNormalizadaInit === 'Entrega Final'
+      ? 'Finalizado'
+      : proyecto.estado === 'Finalizado'
+      ? 'En Curso'
+      : proyecto.estado || 'En Curso'
   );
+  const [etapaActual, setEtapaActual] = useState(etapaNormalizadaInit);
   const [toast, setToast] = useState<string | null>(null);
 
   // Estado Económico y Semáforo de Obra
@@ -123,6 +166,7 @@ export default function FichaProyectoClient({
 
   const [modalCompra, setModalCompra] = useState(false);
   const [compraEditando, setCompraEditando] = useState<any | null>(null);
+  const [proveedorSeleccionadoObra, setProveedorSeleccionadoObra] = useState<string | null>(null);
   const [modalMovimiento, setModalMovimiento] = useState(false);
   const [movEditando, setMovEditando] = useState<any | null>(null);
   const [modalTarea, setModalTarea] = useState(false);
@@ -131,6 +175,12 @@ export default function FichaProyectoClient({
   const [docEditando, setDocEditando] = useState<any | null>(null);
   const [modalVisita, setModalVisita] = useState(false);
   const [visitaEditando, setVisitaEditando] = useState<any | null>(null);
+
+  // Serie Índice CAC desde API CAMARCO
+  const [serieCAC, setSerieCAC] = useState<{ periodo: string; etiqueta: string; valor: number }[]>([
+    { periodo: 'OCT2026', etiqueta: 'Octubre 2026', valor: 23884.2 },
+  ]);
+  const [cargandoCAC, setCargandoCAC] = useState(false);
 
   // Estados del Modal Editar Datos del Proyecto
   const [modalEditarProy, setModalEditarProy] = useState(false);
@@ -144,10 +194,23 @@ export default function FichaProyectoClient({
   const [editSuperficie, setEditSuperficie] = useState(
     proyecto.superficie ? String(proyecto.superficie) : ''
   );
-  const [editPresupuesto, setEditPresupuesto] = useState(String(proyecto.presupuesto || ''));
+  const [editMoneda, setEditMoneda] = useState<'USD' | 'ARS'>(
+    String(proyecto.moneda || 'USD').toUpperCase() === 'ARS' ? 'ARS' : 'USD'
+  );
+  const [editPresupuesto, setEditPresupuesto] = useState(numeroAInputArg(proyecto.presupuesto));
+  const [editCertificaciones, setEditCertificaciones] = useState<'Quincenales' | 'Mensuales'>(
+    proyecto.certificaciones === 'Quincenales' ? 'Quincenales' : 'Mensuales'
+  );
+  const [editRedeterminacionTipo, setEditRedeterminacionTipo] = useState<'USD' | 'Índice CAC'>(
+    proyecto.redeterminacion_tipo === 'Índice CAC' ? 'Índice CAC' : 'USD'
+  );
+  const [editCacMesBase, setEditCacMesBase] = useState(proyecto.cac_mes_base || 'OCT2026');
+  const [editCacValorBase, setEditCacValorBase] = useState(
+    numeroAInputArg(proyecto.cac_valor_base || 23884.2)
+  );
   const [editFechaInicio, setEditFechaInicio] = useState(proyecto.fecha_inicio || '');
   const [editFechaEntrega, setEditFechaEntrega] = useState(
-    proyecto.entrega_estimada || proyecto.fecha_entrega || ''
+    proyecto.fecha_fin_plan || proyecto.entrega_estimada || proyecto.fecha_entrega || ''
   );
   const [editDriveUrl, setEditDriveUrl] = useState(proyecto.drive_url || '');
   const [editDescripcion, setEditDescripcion] = useState(
@@ -155,14 +218,42 @@ export default function FichaProyectoClient({
   );
   const [guardandoEdicion, setGuardandoEdicion] = useState(false);
 
+  const cargarSerieCAC = async () => {
+    setCargandoCAC(true);
+    try {
+      const res = await fetch('/api/indice-cac');
+      if (res.ok) {
+        const json = await res.json();
+        if (Array.isArray(json.serie) && json.serie.length > 0) {
+          setSerieCAC(json.serie);
+        }
+      }
+    } catch {
+      // Mantiene respaldo local
+    } finally {
+      setCargandoCAC(false);
+    }
+  };
+
   useEffect(() => {
     setMontado(true);
+    cargarSerieCAC();
   }, []);
 
   useEffect(() => {
     setDatosProyectoLocal(proyecto);
-    setEstadoProyecto(proyecto.estado || 'En Diseño');
-    setEtapaActual(proyecto.etapa_actual || proyecto.etapa || 'Relevamiento y Concepto');
+    const etNorm =
+      proyecto.etapa === 'Entrega y Post-Obra' || proyecto.etapa_actual === 'Entrega y Post-Obra'
+        ? 'Entrega Final'
+        : proyecto.etapa_actual || proyecto.etapa || 'Relevamiento y Concepto';
+    setEtapaActual(etNorm);
+    setEstadoProyecto(
+      etNorm === 'Entrega Final'
+        ? 'Finalizado'
+        : proyecto.estado === 'Finalizado'
+        ? 'En Curso'
+        : proyecto.estado || 'En Curso'
+    );
   }, [proyecto]);
 
   useEffect(() => {
@@ -177,11 +268,33 @@ export default function FichaProyectoClient({
     setEditResponsable(datosProyectoLocal.responsable || '');
     setEditClienteId(datosProyectoLocal.cliente_id ? String(datosProyectoLocal.cliente_id) : '');
     setEditUbicacion(datosProyectoLocal.ubicacion || '');
-    setEditSuperficie(datosProyectoLocal.superficie ? String(datosProyectoLocal.superficie) : '');
-    setEditPresupuesto(String(datosProyectoLocal.presupuesto || ''));
+    setEditSuperficie(datosProyectoLocal.superficie ? numeroAInputArg(datosProyectoLocal.superficie) : '');
+    const mon = (
+      String(datosProyectoLocal.moneda || 'USD').toUpperCase() === 'ARS' ? 'ARS' : 'USD'
+    ) as 'USD' | 'ARS';
+    setEditMoneda(mon);
+    setEditPresupuesto(numeroAInputArg(datosProyectoLocal.presupuesto));
+    setEditCertificaciones(
+      datosProyectoLocal.certificaciones === 'Quincenales' ? 'Quincenales' : 'Mensuales'
+    );
+    setEditRedeterminacionTipo(
+      datosProyectoLocal.redeterminacion_tipo === 'Índice CAC'
+        ? 'Índice CAC'
+        : mon === 'ARS'
+        ? 'Índice CAC'
+        : 'USD'
+    );
+    const mes = datosProyectoLocal.cac_mes_base || serieCAC[0]?.periodo || 'OCT2026';
+    setEditCacMesBase(mes);
+    const valGuardado = Number(datosProyectoLocal.cac_valor_base || 0);
+    const valSerie = serieCAC.find((s) => s.periodo === mes)?.valor || 23884.2;
+    setEditCacValorBase(numeroAInputArg(valGuardado > 0 ? valGuardado : valSerie));
     setEditFechaInicio(datosProyectoLocal.fecha_inicio || '');
     setEditFechaEntrega(
-      datosProyectoLocal.entrega_estimada || datosProyectoLocal.fecha_entrega || ''
+      datosProyectoLocal.fecha_fin_plan ||
+        datosProyectoLocal.entrega_estimada ||
+        datosProyectoLocal.fecha_entrega ||
+        ''
     );
     setEditDriveUrl(datosProyectoLocal.drive_url || '');
     setEditDescripcion(datosProyectoLocal.notas || datosProyectoLocal.descripcion || '');
@@ -237,8 +350,13 @@ export default function FichaProyectoClient({
 
   const seleccionarEtapa = async (nuevaEtapa: string) => {
     setEtapaActual(nuevaEtapa);
-    const nuevoEstado = nuevaEtapa === 'Entrega y Post-Obra' ? 'Finalizado' : estadoProyecto;
-    if (nuevaEtapa === 'Entrega y Post-Obra') setEstadoProyecto('Finalizado');
+    const nuevoEstado =
+      nuevaEtapa === 'Entrega Final'
+        ? 'Finalizado'
+        : estadoProyecto === 'Pausado'
+        ? 'Pausado'
+        : 'En Curso';
+    setEstadoProyecto(nuevoEstado);
 
     await supabase
       .from('proyectos')
@@ -251,7 +369,7 @@ export default function FichaProyectoClient({
       etapa_actual: nuevaEtapa,
       estado: nuevoEstado,
     }));
-    mostrarToast(`Etapa actualizada: ${nuevaEtapa}`);
+    mostrarToast(`Etapa actualizada: ${nuevaEtapa} (${nuevoEstado})`);
     router.refresh();
   };
 
@@ -372,10 +490,9 @@ export default function FichaProyectoClient({
     setGuardandoEdicion(true);
 
     try {
-      const presNum =
-        parseFloat(String(editPresupuesto).replace(/\./g, '').replace(',', '.')) || 0;
-      const supNum =
-        parseFloat(String(editSuperficie).replace(/[^0-9.,]/g, '').replace(',', '.')) || 0;
+      const presNum = parsearNumeroArg(editPresupuesto);
+      const supNum = parsearNumeroArg(editSuperficie);
+      const cacNum = parsearNumeroArg(editCacValorBase);
       const clienteObj = clientes.find((c) => String(c.id) === String(editClienteId));
 
       const datos: Record<string, any> = {
@@ -386,9 +503,15 @@ export default function FichaProyectoClient({
         cliente_nombre: clienteObj ? clienteObj.nombre : null,
         ubicacion: editUbicacion.trim() || null,
         superficie: supNum,
+        moneda: editMoneda,
         presupuesto: presNum,
+        certificaciones: editCertificaciones,
+        redeterminacion_tipo: editRedeterminacionTipo,
+        cac_mes_base: editRedeterminacionTipo === 'Índice CAC' ? editCacMesBase : null,
+        cac_valor_base: editRedeterminacionTipo === 'Índice CAC' ? cacNum : 0,
         fecha_inicio: editFechaInicio || null,
         entrega_estimada: editFechaEntrega || null,
+        fecha_fin_plan: editFechaEntrega || null,
         drive_url: editDriveUrl.trim() || null,
         notas: editDescripcion.trim() || null,
       };
@@ -456,7 +579,25 @@ export default function FichaProyectoClient({
     return e === 'abonado' || e === 'cobrado' || e === 'pagado' || e === 'finalizado';
   };
 
-  const presupuestoUsd = Number(datosProyectoLocal.presupuesto || 0);
+  const cotizacionPromedioProyecto = useMemo(() => {
+    const conCot = movimientos.filter((m) => Number(m.valor_usd || 0) > 0);
+    if (conCot.length === 0) return 1450;
+    const suma = conCot.reduce((acc, m) => acc + Number(m.valor_usd), 0);
+    return Math.round(suma / conCot.length);
+  }, [movimientos]);
+
+  const monedaBaseProyecto = String(datosProyectoLocal.moneda || 'USD').toUpperCase();
+  const presupuestoCargado = Number(datosProyectoLocal.presupuesto || 0);
+
+  const presupuestoUsd = useMemo(() => {
+    if (monedaBaseProyecto === 'USD') return presupuestoCargado;
+    return Math.round((presupuestoCargado / cotizacionPromedioProyecto) * 100) / 100;
+  }, [monedaBaseProyecto, presupuestoCargado, cotizacionPromedioProyecto]);
+
+  const presupuestoArs = useMemo(() => {
+    if (monedaBaseProyecto === 'ARS') return presupuestoCargado;
+    return presupuestoCargado * cotizacionPromedioProyecto;
+  }, [monedaBaseProyecto, presupuestoCargado, cotizacionPromedioProyecto]);
 
   const ingresosCobradosUsd = useMemo(() => {
     return movimientos
@@ -469,18 +610,6 @@ export default function FichaProyectoClient({
       .filter((m) => esEgresoMov(m))
       .reduce((acc, m) => acc + obtenerUsdEquivalente(m), 0);
   }, [movimientos]);
-
-  const cotizacionPromedioProyecto = useMemo(() => {
-    const conCot = movimientos.filter((m) => Number(m.valor_usd || 0) > 0);
-    if (conCot.length === 0) return 1450;
-    const suma = conCot.reduce((acc, m) => acc + Number(m.valor_usd), 0);
-    return Math.round(suma / conCot.length);
-  }, [movimientos]);
-
-  const presupuestoArs = useMemo(() => {
-    if (String(datosProyectoLocal.moneda || 'USD').toUpperCase() === 'ARS') return presupuestoUsd;
-    return presupuestoUsd * cotizacionPromedioProyecto;
-  }, [datosProyectoLocal.moneda, presupuestoUsd, cotizacionPromedioProyecto]);
 
   const ingresosCobradosArs = useMemo(() => {
     return movimientos
@@ -652,12 +781,6 @@ export default function FichaProyectoClient({
     });
   }, [tareas, filtroTareaResumen]);
 
-  const proximaVisita = useMemo(() => {
-    const hoyIso = new Date().toISOString().split('T')[0];
-    const futuras = visitas.filter((v) => v.fecha && v.fecha >= hoyIso && v.estado !== 'Finalizado');
-    return futuras[0] || null;
-  }, [visitas]);
-
   const todasFotosBitacora = useMemo(() => {
     const lista = visitas.flatMap((v) =>
       Array.isArray(v.fotos)
@@ -767,7 +890,10 @@ export default function FichaProyectoClient({
   const nombreClienteMostrar =
     clienteAsociado?.nombre || datosProyectoLocal.cliente_nombre || 'Sin cliente';
   const fechaEntregaMostrar =
-    datosProyectoLocal.entrega_estimada || datosProyectoLocal.fecha_entrega || '';
+    datosProyectoLocal.fecha_fin_plan ||
+    datosProyectoLocal.entrega_estimada ||
+    datosProyectoLocal.fecha_entrega ||
+    '';
   const notasMostrar = datosProyectoLocal.notas || datosProyectoLocal.descripcion || '';
 
   return (
@@ -788,7 +914,6 @@ export default function FichaProyectoClient({
             onChange={(e) => cambiarEstadoProyecto(e.target.value)}
             className="bg-[#242424] border border-white/10 rounded-xl px-3 py-2 text-xs font-semibold text-white cursor-pointer"
           >
-            <option value="En Diseño">En Diseño</option>
             <option value="En Curso">En Curso</option>
             <option value="Pausado">Pausado</option>
             <option value="Finalizado">Finalizado</option>
@@ -1030,7 +1155,7 @@ export default function FichaProyectoClient({
                     <div className="text-[11px] text-gray-400">Superficie</div>
                     <div className="text-xs font-bold text-white mt-1">
                       {Number(datosProyectoLocal.superficie || 0) > 0
-                        ? `${datosProyectoLocal.superficie} m²`
+                        ? `${numeroAInputArg(datosProyectoLocal.superficie)} m²`
                         : datosProyectoLocal.superficie || '—'}
                     </div>
                   </div>
@@ -1042,9 +1167,12 @@ export default function FichaProyectoClient({
                     </div>
                   </div>
                   <div className="bg-[#181818] border border-white/10 rounded-xl p-3.5">
-                    <div className="text-[11px] text-gray-400">Próxima Visita</div>
+                    <div className="text-[11px] text-gray-400">Certif. / Redet.</div>
                     <div className="text-xs font-bold text-[#EAB308] mt-1">
-                      {proximaVisita ? formatearFechaCorta(proximaVisita.fecha) : 'Sin agendar'}
+                      {datosProyectoLocal.certificaciones || 'Mensuales'} ·{' '}
+                      {datosProyectoLocal.redeterminacion_tipo === 'Índice CAC'
+                        ? `CAC (${datosProyectoLocal.cac_mes_base || 'OCT2026'})`
+                        : 'USD'}
                     </div>
                   </div>
                 </div>
@@ -1747,6 +1875,7 @@ export default function FichaProyectoClient({
                   const impOriginal = Number(m.importe ?? 0) || Number(m.monto ?? 0);
                   const equivUsd = obtenerUsdEquivalente(m);
                   const abonado = esAbonadoMov(m.estado);
+                  const difCac = Number(m.diferencia_cac || 0);
 
                   return (
                     <div
@@ -1760,6 +1889,11 @@ export default function FichaProyectoClient({
                       <div className="space-y-1">
                         <div className="flex flex-wrap items-center gap-2">
                           <span className="font-bold text-sm text-white">{m.concepto}</span>
+                          {difCac > 0 && (
+                            <span className="bg-[#EAB308]/15 border border-[#EAB308]/40 text-[#EAB308] px-2 py-0.5 rounded text-[10px] font-bold">
+                              +CAC ARS ${difCac.toLocaleString('es-AR', { minimumFractionDigits: 2 })}
+                            </span>
+                          )}
                           {m.tipo_comprobante && (
                             <span className="bg-blue-950/80 border border-blue-800/60 text-blue-400 px-2 py-0.5 rounded text-[10px] font-bold">
                               {m.tipo_comprobante}
@@ -1850,113 +1984,271 @@ export default function FichaProyectoClient({
         </>
       )}
 
-      {/* PESTAÑA: COMPRAS */}
-      {pestanaActiva === 'compras' && (
-        <div className="bg-[#242424] border border-white/10 rounded-2xl p-6 shadow-xl mb-6">
-          <div className="flex flex-wrap justify-between items-center gap-4 mb-4">
-            <div>
-              <h2 className="text-base font-bold text-white flex items-center gap-2">
-                <ShoppingCart className="w-4 h-4 text-[#EAB308]" />
-                Compras y Facturas del Proyecto ({compras.length})
-              </h2>
-              <p className="text-xs text-gray-400 mt-0.5">
-                Pedidos vinculados a {datosProyectoLocal.codigo} · {datosProyectoLocal.nombre}
-              </p>
-            </div>
-            <button
-              type="button"
-              onClick={() => {
-                setCompraEditando(null);
-                setModalCompra(true);
-              }}
-              className="bg-[#EAB308] hover:bg-[#CA9A04] text-black px-4 py-2 rounded-xl font-bold text-xs inline-flex items-center gap-1.5 cursor-pointer"
-            >
-              <Plus className="w-4 h-4" /> Nueva compra / factura
-            </button>
-          </div>
-          <div className="overflow-x-auto">
-            <table className="w-full text-left border-collapse">
-              <thead>
-                <tr className="border-b border-white/10 text-[11px] font-bold uppercase tracking-wider text-gray-400">
-                  <th className="py-3 px-3">FECHA / FACTURA</th>
-                  <th className="py-3 px-3">PROVEEDOR / CONCEPTO</th>
-                  <th className="py-3 px-3">IMPORTE ORIGINAL</th>
-                  <th className="py-3 px-3">EQUIV. USD</th>
-                  <th className="py-3 px-3">ESTADO</th>
-                  <th className="py-3 px-3 text-right">PDF</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-white/10 text-sm">
-                {compras.length === 0 ? (
-                  <tr>
-                    <td colSpan={6} className="py-8 text-center text-gray-400 text-xs">
-                      Aún no hay compras cargadas en este proyecto.
-                    </td>
-                  </tr>
-                ) : (
-                  compras.map((c) => (
-                    <tr
-                      key={c.id}
-                      onClick={() => {
-                        setCompraEditando(c);
-                        setModalCompra(true);
-                      }}
-                      className="hover:bg-white/5 transition-colors cursor-pointer"
-                    >
-                      <td className="py-3 px-3 text-xs">
-                        <div className="font-semibold text-white">{c.fecha || '—'}</div>
-                        <div className="text-[11px] text-gray-400">{c.nro_orden || '—'}</div>
-                      </td>
-                      <td className="py-3 px-3 text-xs">
-                        <div className="font-bold text-white">{c.proveedor}</div>
-                        <div className="text-gray-400">{c.concepto}</div>
-                      </td>
-                      <td className="py-3 px-3 text-xs font-bold text-white">
-                        {c.moneda === 'USD' ? 'USD $' : '$ '}
-                        {Number(c.importe || 0).toLocaleString('es-AR', {
-                          minimumFractionDigits: 2,
-                          maximumFractionDigits: 2,
-                        })}
-                      </td>
-                      <td className="py-3 px-3 text-xs font-extrabold text-[#EAB308]">
-                        USD $
-                        {Number(
-                          c.moneda === 'USD' ? c.importe || 0 : c.importe_usd || 0
-                        ).toLocaleString('es-AR', {
-                          minimumFractionDigits: 2,
-                          maximumFractionDigits: 2,
-                        })}
-                      </td>
-                      <td className="py-3 px-3 text-xs">
-                        <span className="px-2.5 py-0.5 rounded-full bg-gray-800 text-gray-200 font-semibold text-[11px]">
-                          {c.estado}
-                        </span>
-                      </td>
-                      <td className="py-3 px-3 text-right text-xs">
-                        {c.archivo_url && (
-                          <button
-                            type="button"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              abrirVisorIntegrado(
-                                c.archivo_url,
-                                `${c.proveedor || 'Factura'} · ${c.nro_orden || c.concepto}`
-                              );
-                            }}
-                            className="px-2.5 py-1 rounded-lg bg-blue-500/15 border border-blue-500/40 text-blue-400 hover:bg-blue-500/25 font-semibold inline-flex items-center gap-1 cursor-pointer"
-                          >
-                            <FileText className="w-3.5 h-3.5" /> Ver
-                          </button>
-                        )}
-                      </td>
-                    </tr>
-                  ))
+      {/* PESTAÑA: COMPRAS Y DESGLOSE POR PROVEEDOR EN EL PROYECTO */}
+      {pestanaActiva === 'compras' &&
+        (() => {
+          const gruposProv = Object.values(
+            compras.reduce((acc: Record<string, any>, c: any) => {
+              const nombre = String(c.proveedor || 'Sin proveedor').trim();
+              if (!acc[nombre]) {
+                acc[nombre] = {
+                  proveedor: nombre,
+                  totalUsd: 0,
+                  pedidos: [],
+                  materiales: [],
+                };
+              }
+              const usd =
+                String(c.moneda || '').toUpperCase() === 'USD'
+                  ? Number(c.importe || 0)
+                  : Number(c.importe_usd || 0);
+              acc[nombre].totalUsd += usd;
+              acc[nombre].pedidos.push(c);
+
+              if (Array.isArray(c.items_materiales) && c.items_materiales.length > 0) {
+                c.items_materiales.forEach((it: any) => {
+                  acc[nombre].materiales.push({
+                    ...it,
+                    fecha: c.fecha,
+                    factura: c.nro_orden,
+                  });
+                });
+              } else {
+                acc[nombre].materiales.push({
+                  id: c.id,
+                  material: c.concepto,
+                  cantidad: '1',
+                  unidad: 'pedido',
+                  estado: c.estado || 'Entregado',
+                  fecha: c.fecha,
+                  factura: c.nro_orden,
+                });
+              }
+              return acc;
+            }, {})
+          );
+
+          const grupoActivo = gruposProv.find(
+            (g: any) => g.proveedor === proveedorSeleccionadoObra
+          );
+
+          return (
+            <div className="space-y-6 mb-6">
+              <div className="bg-[#242424] border border-white/10 rounded-2xl p-6 shadow-xl">
+                <div className="flex flex-wrap justify-between items-center gap-4 mb-4">
+                  <div>
+                    <h2 className="text-base font-bold text-white flex items-center gap-2">
+                      <ShoppingCart className="w-4 h-4 text-[#EAB308]" />
+                      Proveedores y Compras del Proyecto ({compras.length})
+                    </h2>
+                    <p className="text-xs text-gray-400 mt-0.5">
+                      Seleccioná un proveedor para ver los materiales adquiridos, cantidades y estado
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setCompraEditando(null);
+                      setModalCompra(true);
+                    }}
+                    className="bg-[#EAB308] hover:bg-[#CA9A04] text-black px-4 py-2 rounded-xl font-bold text-xs inline-flex items-center gap-1.5 cursor-pointer"
+                  >
+                    <Plus className="w-4 h-4" /> Nueva compra / factura
+                  </button>
+                </div>
+
+                {gruposProv.length > 0 && (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 mb-5">
+                    {gruposProv.map((g: any) => {
+                      const activo = proveedorSeleccionadoObra === g.proveedor;
+                      return (
+                        <button
+                          key={g.proveedor}
+                          type="button"
+                          onClick={() =>
+                            setProveedorSeleccionadoObra(activo ? null : g.proveedor)
+                          }
+                          className={`text-left p-4 rounded-xl border transition-all cursor-pointer ${
+                            activo
+                              ? 'bg-[#EAB308]/10 border-[#EAB308]'
+                              : 'bg-[#181818] border-white/10 hover:border-white/25'
+                          }`}
+                        >
+                          <div className="text-xs font-extrabold text-white truncate">
+                            {g.proveedor}
+                          </div>
+                          <div className="text-[11px] text-gray-400 mt-0.5">
+                            {g.pedidos.length} {g.pedidos.length === 1 ? 'compra' : 'compras'} ·{' '}
+                            {g.materiales.length} ítems
+                          </div>
+                          <div className="text-sm font-extrabold text-[#EAB308] mt-2">
+                            USD $
+                            {g.totalUsd.toLocaleString('es-AR', {
+                              minimumFractionDigits: 2,
+                              maximumFractionDigits: 2,
+                            })}
+                          </div>
+                        </button>
+                      );
+                    })}
+                  </div>
                 )}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      )}
+
+                {grupoActivo && (
+                  <div className="bg-[#181818] border border-[#EAB308]/40 rounded-xl p-4 mb-5">
+                    <div className="flex justify-between items-center mb-3">
+                      <h3 className="text-xs font-extrabold uppercase tracking-wider text-[#EAB308]">
+                        Materiales comprados a {grupoActivo.proveedor} (
+                        {grupoActivo.materiales.length})
+                      </h3>
+                      <button
+                        type="button"
+                        onClick={() => setProveedorSeleccionadoObra(null)}
+                        className="text-xs text-gray-400 hover:text-white cursor-pointer"
+                      >
+                        Cerrar detalle ✕
+                      </button>
+                    </div>
+
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-left border-collapse text-xs">
+                        <thead>
+                          <tr className="border-b border-white/10 text-[10px] font-bold uppercase text-gray-400">
+                            <th className="py-2 px-3">MATERIAL / DESCRIPCIÓN</th>
+                            <th className="py-2 px-3 text-center">CANTIDAD</th>
+                            <th className="py-2 px-3">FECHA / FACTURA</th>
+                            <th className="py-2 px-3 text-right">ESTADO</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-white/10">
+                          {grupoActivo.materiales.map((m: any, i: number) => (
+                            <tr key={m.id || i}>
+                              <td className="py-2.5 px-3 font-bold text-white">{m.material}</td>
+                              <td className="py-2.5 px-3 text-center font-extrabold text-[#EAB308]">
+                                {m.cantidad} {m.unidad}
+                              </td>
+                              <td className="py-2.5 px-3 text-gray-400">
+                                {m.fecha || '—'} {m.factura ? `· ${m.factura}` : ''}
+                              </td>
+                              <td className="py-2.5 px-3 text-right">
+                                <span className="px-2.5 py-0.5 rounded-full bg-gray-800 text-gray-200 font-semibold text-[11px]">
+                                  {m.estado}
+                                </span>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                )}
+
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left border-collapse">
+                    <thead>
+                      <tr className="border-b border-white/10 text-[11px] font-bold uppercase tracking-wider text-gray-400">
+                        <th className="py-3 px-3">FECHA / FACTURA</th>
+                        <th className="py-3 px-3">PROVEEDOR / CONCEPTO</th>
+                        <th className="py-3 px-3">IMPORTE ORIGINAL</th>
+                        <th className="py-3 px-3">EQUIV. USD</th>
+                        <th className="py-3 px-3">ESTADO</th>
+                        <th className="py-3 px-3 text-right">ACCIONES</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-white/10 text-sm">
+                      {compras.length === 0 ? (
+                        <tr>
+                          <td colSpan={6} className="py-8 text-center text-gray-400 text-xs">
+                            Aún no hay compras cargadas en este proyecto.
+                          </td>
+                        </tr>
+                      ) : (
+                        compras.map((c) => (
+                          <tr
+                            key={c.id}
+                            onClick={() => {
+                              setCompraEditando(c);
+                              setModalCompra(true);
+                            }}
+                            className="hover:bg-white/5 transition-colors cursor-pointer"
+                          >
+                            <td className="py-3 px-3 text-xs">
+                              <div className="font-semibold text-white">{c.fecha || '—'}</div>
+                              <div className="text-[11px] text-gray-400">{c.nro_orden || '—'}</div>
+                            </td>
+                            <td className="py-3 px-3 text-xs">
+                              <div className="font-bold text-white">{c.proveedor}</div>
+                              <div className="text-gray-400">{c.concepto}</div>
+                            </td>
+                            <td className="py-3 px-3 text-xs font-bold text-white">
+                              {c.moneda === 'USD' ? 'USD $' : '$ '}
+                              {Number(c.importe || 0).toLocaleString('es-AR', {
+                                minimumFractionDigits: 2,
+                                maximumFractionDigits: 2,
+                              })}
+                            </td>
+                            <td className="py-3 px-3 text-xs font-extrabold text-[#EAB308]">
+                              USD $
+                              {Number(
+                                c.moneda === 'USD' ? c.importe || 0 : c.importe_usd || 0
+                              ).toLocaleString('es-AR', {
+                                minimumFractionDigits: 2,
+                                maximumFractionDigits: 2,
+                              })}
+                            </td>
+                            <td className="py-3 px-3 text-xs">
+                              <span className="px-2.5 py-0.5 rounded-full bg-gray-800 text-gray-200 font-semibold text-[11px]">
+                                {c.estado}
+                              </span>
+                            </td>
+                            <td className="py-3 px-3 text-right text-xs">
+                              <div className="inline-flex items-center gap-2">
+                                {c.archivo_url && (
+                                  <button
+                                    type="button"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      abrirVisorIntegrado(
+                                        c.archivo_url,
+                                        `${c.proveedor || 'Factura'} · ${c.nro_orden || c.concepto}`
+                                      );
+                                    }}
+                                    className="px-2.5 py-1 rounded-lg bg-blue-500/15 border border-blue-500/40 text-blue-400 hover:bg-blue-500/25 font-semibold inline-flex items-center gap-1 cursor-pointer"
+                                  >
+                                    <FileText className="w-3.5 h-3.5" /> PDF
+                                  </button>
+                                )}
+                                <button
+                                  type="button"
+                                  onClick={async (e) => {
+                                    e.stopPropagation();
+                                    await moverAPapelera({
+                                      tabla: 'compras',
+                                      modulo: 'Compras y Pedidos',
+                                      titulo: `${c.proveedor || 'Proveedor'} · ${c.concepto || ''}`,
+                                      subtitulo: c.nro_orden || '',
+                                      registro: c,
+                                    });
+                                    mostrarToast('Compra enviada a papelera');
+                                    router.refresh();
+                                  }}
+                                  title="Enviar a papelera"
+                                  className="p-1.5 rounded-lg bg-rose-500/15 border border-rose-500/40 text-rose-400 hover:bg-rose-500/30 cursor-pointer"
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                </button>
+                              </div>
+                            </td>
+                          </tr>
+                        ))
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+          );
+        })()}
 
       {/* PESTAÑA: TAREAS */}
       {pestanaActiva === 'tareas' && (
@@ -2308,24 +2600,134 @@ export default function FichaProyectoClient({
                     <input
                       type="text"
                       value={editSuperficie}
-                      onChange={(e) => setEditSuperficie(e.target.value)}
+                      onChange={(e) =>
+                        setEditSuperficie(formatearMilesDecimalesInput(e.target.value))
+                      }
                       placeholder="Ej. 450"
                       className="w-full bg-[#121212] border border-gray-800 rounded-lg px-3 py-2 text-xs text-white"
                     />
                   </div>
                 </div>
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                  <div>
-                    <label className="block text-xs font-semibold text-gray-300 mb-1">
-                      Presupuesto USD
-                    </label>
-                    <input
-                      type="text"
-                      value={editPresupuesto}
-                      onChange={(e) => setEditPresupuesto(e.target.value)}
-                      className="w-full bg-[#121212] border border-gray-800 rounded-lg px-3 py-2 text-xs text-white"
-                    />
+
+                {/* BLOQUE PRESUPUESTO + CERTIFICACIONES + REDETERMINACIÓN CAC */}
+                <div className="bg-[#141414] border border-gray-800 rounded-xl p-4 space-y-3">
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                    <div>
+                      <label className="block text-xs font-semibold text-gray-300 mb-1">
+                        Moneda e Importe
+                      </label>
+                      <div className="flex gap-1.5">
+                        <select
+                          value={editMoneda}
+                          onChange={(e) => {
+                            const m = e.target.value as 'USD' | 'ARS';
+                            setEditMoneda(m);
+                            if (m === 'ARS') setEditRedeterminacionTipo('Índice CAC');
+                            else setEditRedeterminacionTipo('USD');
+                          }}
+                          className="bg-[#121212] border border-gray-700 rounded-lg px-2 py-2 text-xs font-extrabold text-white"
+                        >
+                          <option value="USD">USD</option>
+                          <option value="ARS">ARS</option>
+                        </select>
+                        <input
+                          type="text"
+                          value={editPresupuesto}
+                          onChange={(e) =>
+                            setEditPresupuesto(formatearMilesDecimalesInput(e.target.value))
+                          }
+                          className="w-full bg-[#121212] border border-gray-700 rounded-lg px-3 py-2 text-xs font-bold text-white"
+                        />
+                      </div>
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-semibold text-gray-300 mb-1">
+                        Certificaciones
+                      </label>
+                      <select
+                        value={editCertificaciones}
+                        onChange={(e) =>
+                          setEditCertificaciones(e.target.value as 'Quincenales' | 'Mensuales')
+                        }
+                        className="w-full bg-[#121212] border border-gray-700 rounded-lg px-3 py-2 text-xs font-semibold text-white"
+                      >
+                        <option value="Quincenales">Quincenales</option>
+                        <option value="Mensuales">Mensuales</option>
+                      </select>
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-semibold text-gray-300 mb-1">
+                        Redeterminaciones
+                      </label>
+                      <select
+                        value={editRedeterminacionTipo}
+                        onChange={(e) =>
+                          setEditRedeterminacionTipo(e.target.value as 'USD' | 'Índice CAC')
+                        }
+                        className="w-full bg-[#121212] border border-gray-700 rounded-lg px-3 py-2 text-xs font-semibold text-white"
+                      >
+                        <option value="USD">USD</option>
+                        <option value="Índice CAC">Índice CAC</option>
+                      </select>
+                    </div>
                   </div>
+
+                  {editRedeterminacionTipo === 'Índice CAC' && (
+                    <div className="pt-2 border-t border-gray-800 grid grid-cols-1 md:grid-cols-2 gap-3 items-end">
+                      <div>
+                        <label className="block text-xs font-semibold text-gray-300 mb-1">
+                          Mes y Año Base (Índice General CAMARCO)
+                        </label>
+                        <select
+                          value={editCacMesBase}
+                          onChange={(e) => {
+                            const per = e.target.value;
+                            setEditCacMesBase(per);
+                            const f = serieCAC.find((s) => s.periodo === per);
+                            if (f) setEditCacValorBase(numeroAInputArg(f.valor));
+                          }}
+                          className="w-full bg-[#121212] border border-gray-700 rounded-lg px-3 py-2 text-xs font-bold text-white"
+                        >
+                          {serieCAC.map((item) => (
+                            <option key={item.periodo} value={item.periodo}>
+                              {item.periodo} · {item.etiqueta} ({numeroAInputArg(item.valor)})
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+
+                      <div>
+                        <div className="flex justify-between items-center mb-1">
+                          <label className="text-xs font-semibold text-gray-300">
+                            Costo Construcción CAC ({editCacMesBase})
+                          </label>
+                          <button
+                            type="button"
+                            onClick={cargarSerieCAC}
+                            className="text-[11px] font-bold text-[#EAB308] inline-flex items-center gap-1 cursor-pointer"
+                          >
+                            <RefreshCw
+                              className={`w-3 h-3 ${cargandoCAC ? 'animate-spin' : ''}`}
+                            />
+                            Actualizar CAMARCO
+                          </button>
+                        </div>
+                        <input
+                          type="text"
+                          value={editCacValorBase}
+                          onChange={(e) =>
+                            setEditCacValorBase(formatearMilesDecimalesInput(e.target.value))
+                          }
+                          className="w-full bg-[#121212] border border-gray-700 rounded-lg px-3 py-2 text-xs font-extrabold text-[#EAB308]"
+                        />
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div>
                     <label className="block text-xs font-semibold text-gray-300 mb-1">
                       Fecha Inicio
@@ -2339,7 +2741,7 @@ export default function FichaProyectoClient({
                   </div>
                   <div>
                     <label className="block text-xs font-semibold text-gray-300 mb-1">
-                      Fecha Entrega
+                      Fecha Entrega Planificada
                     </label>
                     <input
                       type="date"
