@@ -45,6 +45,7 @@ export default function DashboardClient({
   // Banner y apariencia personalizable
   const [mostrarBanner, setMostrarBanner] = useState(true);
   const [nombreEstudio, setNombreEstudio] = useState('MB Arquitectura SA');
+  const [titularEstudio, setTitularEstudio] = useState('Alejandro Fego');
   const [subtituloEstudio, setSubtituloEstudio] = useState('ARQUITECTO · DISEÑADOR · ARGENTINA');
   const [modalBanner, setModalBanner] = useState(false);
   const [apariencia, setApariencia] = useState<AparienciaEstudio>({
@@ -73,14 +74,34 @@ export default function DashboardClient({
   const [tareaEditando, setTareaEditando] = useState<any | null>(null);
   const [toast, setToast] = useState<string | null>(null);
 
-  useEffect(() => {
+  const cargarAjustesLocales = () => {
     try {
       const savedNote = localStorage.getItem('mb_notas_rapidas');
       if (savedNote) setNotaRapida(savedNote);
-      const savedNombre = localStorage.getItem('mb_estudio_nombre');
-      if (savedNombre) setNombreEstudio(savedNombre);
+
+      const ajustesRaw = localStorage.getItem('mb_ajustes_estudio');
+      const ajustes = ajustesRaw ? JSON.parse(ajustesRaw) : null;
+
+      if (ajustes?.nombreEstudio) {
+        setNombreEstudio(ajustes.nombreEstudio);
+      } else {
+        const savedNombre = localStorage.getItem('mb_estudio_nombre');
+        if (savedNombre) setNombreEstudio(savedNombre);
+      }
+
+      if (ajustes?.titular) {
+        setTitularEstudio(ajustes.titular);
+      } else {
+        const sesionRaw = localStorage.getItem('mb_sesion_usuario');
+        if (sesionRaw) {
+          const sesion = JSON.parse(sesionRaw);
+          if (sesion?.nombre) setTitularEstudio(sesion.nombre);
+        }
+      }
+
       const savedSub = localStorage.getItem('mb_estudio_sub');
       if (savedSub) setSubtituloEstudio(savedSub);
+
       const savedApariencia = localStorage.getItem('mb_apariencia_estudio');
       if (savedApariencia) {
         setApariencia(JSON.parse(savedApariencia));
@@ -88,6 +109,14 @@ export default function DashboardClient({
     } catch {
       // Silencioso
     }
+  };
+
+  useEffect(() => {
+    cargarAjustesLocales();
+    window.addEventListener('mb_ajustes_actualizados', cargarAjustesLocales);
+    return () => {
+      window.removeEventListener('mb_ajustes_actualizados', cargarAjustesLocales);
+    };
   }, []);
 
   const mostrarToast = (msg: string) => {
@@ -149,7 +178,7 @@ export default function DashboardClient({
         estado: 'Por Realizar',
         prioridad: 'Media',
         rubro: 'Proyecto y Diseño',
-        responsable: equipo[0]?.nombre || 'Alejandro Fego',
+        responsable: equipo[0]?.nombre || titularEstudio,
       },
     ]);
     if (!error) {
@@ -160,6 +189,7 @@ export default function DashboardClient({
       alert('Error al convertir nota: ' + error.message);
     }
   };
+
   // Métricas de Proyectos
   const proyectosActivos = useMemo(
     () => proyectos.filter((p) => String(p.estado || '').toLowerCase() !== 'finalizado'),
@@ -302,6 +332,7 @@ export default function DashboardClient({
     const c = clientes.find((cl) => String(cl.id) === String(clienteId));
     return c?.nombre || '—';
   };
+
   return (
     <div className="min-h-screen bg-[#121212] text-white p-8 font-sans space-y-6">
       {/* 1. BANNER SUPERIOR DEL ESTUDIO */}
@@ -370,7 +401,7 @@ export default function DashboardClient({
       {/* 2. CABECERA PANEL DE CONTROL */}
       <div className="flex flex-wrap justify-between items-center gap-4">
         <h1 className="text-3xl font-extrabold text-white tracking-tight">
-          {tr('panelControl')} · Alejandro Fego
+          {tr('panelControl')} · {titularEstudio}
         </h1>
 
         <div className="flex items-center gap-2.5">

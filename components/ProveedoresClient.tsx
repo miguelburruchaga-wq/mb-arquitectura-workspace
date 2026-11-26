@@ -65,6 +65,7 @@ export default function ProveedoresClient({
   const [paginaWeb, setPaginaWeb] = useState('');
   const [email, setEmail] = useState('');
   const [telefono, setTelefono] = useState('');
+  const [telefonosExtra, setTelefonosExtra] = useState<{ etiqueta: string; numero: string }[]>([]);
   const [notas, setNotas] = useState('');
 
   useEffect(() => {
@@ -125,6 +126,7 @@ export default function ProveedoresClient({
     setPaginaWeb('');
     setEmail('');
     setTelefono('');
+    setTelefonosExtra([]);
     setNotas('');
     setModalAbierto(true);
   };
@@ -140,6 +142,7 @@ export default function ProveedoresClient({
     setPaginaWeb(p.pagina_web || '');
     setEmail(p.email || '');
     setTelefono(p.telefono || '');
+    setTelefonosExtra(Array.isArray(p.telefonos_extra) ? p.telefonos_extra : []);
     setNotas(p.notas || '');
     setModalAbierto(true);
   };
@@ -147,6 +150,13 @@ export default function ProveedoresClient({
   const guardarProveedor = async (e: React.FormEvent) => {
     e.preventDefault();
     setCargando(true);
+
+    const extrasLimpios = telefonosExtra
+      .map((t) => ({
+        etiqueta: t.etiqueta.trim() || 'Alternativo',
+        numero: t.numero.trim(),
+      }))
+      .filter((t) => t.numero !== '');
 
     const datos = {
       codigo: codigo.trim() || generarSiguienteCodigo(),
@@ -158,6 +168,7 @@ export default function ProveedoresClient({
       pagina_web: paginaWeb.trim() || null,
       email: email.trim() || null,
       telefono: telefono.trim() || null,
+      telefonos_extra: extrasLimpios,
       notas: notas.trim() || null,
     };
 
@@ -202,6 +213,9 @@ export default function ProveedoresClient({
   const proveedoresFiltrados = useMemo(() => {
     return proveedoresIniciales.filter((p) => {
       const q = busqueda.toLowerCase().trim();
+      const extrasTexto = Array.isArray(p.telefonos_extra)
+        ? p.telefonos_extra.map((t: any) => `${t.etiqueta} ${t.numero}`).join(' ')
+        : '';
       const coincideBusq =
         !q ||
         (p.codigo || '').toLowerCase().includes(q) ||
@@ -209,7 +223,8 @@ export default function ProveedoresClient({
         (p.cuit || '').toLowerCase().includes(q) ||
         (p.rubro || '').toLowerCase().includes(q) ||
         (p.contacto_nombre || '').toLowerCase().includes(q) ||
-        (p.telefono || '').toLowerCase().includes(q);
+        (p.telefono || '').toLowerCase().includes(q) ||
+        extrasTexto.toLowerCase().includes(q);
 
       const coincideRubro = filtroRubro === 'Todos' || p.rubro === filtroRubro;
       return coincideBusq && coincideRubro;
@@ -316,6 +331,11 @@ export default function ProveedoresClient({
                   const mapsUrl = obtenerUrlMaps(p.direccion);
                   const webUrl = obtenerUrlWeb(p.pagina_web);
                   const gmailUrl = obtenerUrlGmail(p.email);
+                  const extras: { etiqueta: string; numero: string }[] = Array.isArray(
+                    p.telefonos_extra
+                  )
+                    ? p.telefonos_extra
+                    : [];
 
                   return (
                     <tr
@@ -377,6 +397,29 @@ export default function ProveedoresClient({
                             ) : (
                               <span className="text-gray-400">{p.telefono}</span>
                             ))}
+
+                          {extras.map((tel, idx) => {
+                            const waExtra = obtenerUrlWhatsapp(tel.numero);
+                            return waExtra ? (
+                              <a
+                                key={idx}
+                                href={waExtra}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                onClick={(e) => e.stopPropagation()}
+                                className="inline-flex items-center gap-1 text-gray-300 hover:text-emerald-400 hover:underline transition-colors"
+                                title={`Abrir WhatsApp (${tel.etiqueta})`}
+                              >
+                                <MessageCircle className="w-3.5 h-3.5 text-emerald-400" />
+                                <span className="text-gray-400">{tel.etiqueta}:</span>
+                                <span>{tel.numero}</span>
+                              </a>
+                            ) : (
+                              <span key={idx} className="text-gray-400">
+                                {tel.etiqueta}: {tel.numero}
+                              </span>
+                            );
+                          })}
 
                           {gmailUrl && (
                             <a
@@ -586,7 +629,7 @@ export default function ProveedoresClient({
                   </div>
                 </div>
 
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 items-start">
                   <div>
                     <div className="flex items-center justify-between mb-1.5">
                       <label className="block text-xs font-semibold text-gray-300">Email</label>
@@ -609,19 +652,33 @@ export default function ProveedoresClient({
                       className="w-full bg-[#121212] border border-gray-700/80 rounded-lg px-3 py-2.5 text-sm text-white placeholder-gray-500"
                     />
                   </div>
-                  <div>
+                  <div className="space-y-2">
                     <div className="flex items-center justify-between mb-1.5">
                       <label className="block text-xs font-semibold text-gray-300">Teléfono</label>
-                      {obtenerUrlWhatsapp(telefono) && (
-                        <a
-                          href={obtenerUrlWhatsapp(telefono)!}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="text-[11px] font-bold text-emerald-400 hover:underline inline-flex items-center gap-1"
+                      <div className="flex items-center gap-3">
+                        {obtenerUrlWhatsapp(telefono) && (
+                          <a
+                            href={obtenerUrlWhatsapp(telefono)!}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-[11px] font-bold text-emerald-400 hover:underline inline-flex items-center gap-1"
+                          >
+                            <MessageCircle className="w-3 h-3" /> Abrir WhatsApp
+                          </a>
+                        )}
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setTelefonosExtra((prev) => [
+                              ...prev,
+                              { etiqueta: 'WhatsApp / Otro', numero: '' },
+                            ])
+                          }
+                          className="text-[11px] font-bold text-[#EAB308] hover:underline inline-flex items-center gap-0.5 cursor-pointer"
                         >
-                          <MessageCircle className="w-3 h-3" /> Abrir WhatsApp
-                        </a>
-                      )}
+                          <Plus className="w-3 h-3" /> Agregar teléfono
+                        </button>
+                      </div>
                     </div>
                     <input
                       type="text"
@@ -630,6 +687,67 @@ export default function ProveedoresClient({
                       placeholder="+54 / +52 / +34 ..."
                       className="w-full bg-[#121212] border border-gray-700/80 rounded-lg px-3 py-2.5 text-sm text-white placeholder-gray-500"
                     />
+
+                    {telefonosExtra.map((tel, idx) => {
+                      const waExtra = obtenerUrlWhatsapp(tel.numero);
+                      return (
+                        <div key={idx} className="space-y-1 pt-1">
+                          <div className="flex items-center justify-between">
+                            <span className="text-[11px] text-gray-400">
+                              Teléfono adicional #{idx + 1}
+                            </span>
+                            {waExtra && (
+                              <a
+                                href={waExtra}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="text-[11px] font-bold text-emerald-400 hover:underline inline-flex items-center gap-1"
+                              >
+                                <MessageCircle className="w-3 h-3" /> Abrir WhatsApp
+                              </a>
+                            )}
+                          </div>
+                          <div className="grid grid-cols-12 gap-1.5 items-center">
+                            <input
+                              type="text"
+                              value={tel.etiqueta}
+                              onChange={(e) =>
+                                setTelefonosExtra((prev) =>
+                                  prev.map((item, i) =>
+                                    i === idx ? { ...item, etiqueta: e.target.value } : item
+                                  )
+                                )
+                              }
+                              placeholder="Etiqueta (ej. Ventas)"
+                              className="col-span-4 bg-[#121212] border border-gray-700/80 rounded-lg px-2.5 py-2 text-xs text-gray-300"
+                            />
+                            <input
+                              type="text"
+                              value={tel.numero}
+                              onChange={(e) =>
+                                setTelefonosExtra((prev) =>
+                                  prev.map((item, i) =>
+                                    i === idx ? { ...item, numero: e.target.value } : item
+                                  )
+                                )
+                              }
+                              placeholder="+54 9 11..."
+                              className="col-span-7 bg-[#121212] border border-gray-700/80 rounded-lg px-3 py-2 text-sm text-white"
+                            />
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setTelefonosExtra((prev) => prev.filter((_, i) => i !== idx))
+                              }
+                              className="col-span-1 text-rose-400 hover:text-rose-300 text-xs font-bold text-center cursor-pointer"
+                              title="Quitar teléfono"
+                            >
+                              ✕
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })}
                   </div>
                 </div>
 

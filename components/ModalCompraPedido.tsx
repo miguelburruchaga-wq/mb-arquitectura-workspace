@@ -33,7 +33,6 @@ function parsearNum(valor: string | number): number {
   if (typeof valor === 'number') return valor;
   const s = String(valor || '').trim();
   if (!s) return 0;
-  // Elimina todos los puntos de miles y convierte la coma decimal en punto
   const normalizado = s.replace(/\./g, '').replace(',', '.');
   return parseFloat(normalizado) || 0;
 }
@@ -73,6 +72,7 @@ export default function ModalCompraPedido({
   const [buscandoDolar, setBuscandoDolar] = useState(false);
   const [infoAutoLectura, setInfoAutoLectura] = useState<string | null>(null);
   const [visorPrevio, setVisorPrevio] = useState(false);
+  const [listaProveedores, setListaProveedores] = useState<any[]>(proveedores);
 
   const hoy = new Date().toISOString().split('T')[0];
 
@@ -102,6 +102,12 @@ export default function ModalCompraPedido({
   useEffect(() => {
     setMontado(true);
   }, []);
+
+  useEffect(() => {
+    if (proveedores && proveedores.length > 0) {
+      setListaProveedores(proveedores);
+    }
+  }, [proveedores]);
 
   useEffect(() => {
     const cerrarAlClickAfuera = (e: MouseEvent) => {
@@ -153,6 +159,17 @@ export default function ModalCompraPedido({
     setInfoAutoLectura(null);
     setDropAbierto(null);
 
+    // Cargar siempre los proveedores actualizados desde Supabase
+    supabase
+      .from('proveedores')
+      .select('id, codigo, nombre, cuit, rubro')
+      .order('nombre', { ascending: true })
+      .then(({ data }) => {
+        if (data && data.length > 0) {
+          setListaProveedores(data);
+        }
+      });
+
     if (compraEditando) {
       setProyectoCodigo(compraEditando.proyecto_codigo || proyectoFijoCodigo || '');
       setProveedor(compraEditando.proveedor || '');
@@ -193,13 +210,15 @@ export default function ModalCompraPedido({
 
   const proveedoresFiltradosDrop = useMemo(() => {
     const q = proveedor.trim().toLowerCase();
-    if (!q) return proveedores;
-    return proveedores.filter(
+    if (!q || q === 'proveedor general') return listaProveedores;
+    const coincidencias = listaProveedores.filter(
       (pr) =>
         pr.nombre.toLowerCase().includes(q) ||
         String(pr.cuit || '').toLowerCase().includes(q)
     );
-  }, [proveedores, proveedor]);
+    // Si escribió o autocompletó un nombre exacto, mostrar igual todos para poder cambiarlo fácil
+    return coincidencias.length > 0 ? coincidencias : listaProveedores;
+  }, [listaProveedores, proveedor]);
 
   const equivalenteUsdCalculado = useMemo(() => {
     const imp = parsearNum(importeTexto);
@@ -218,7 +237,6 @@ export default function ModalCompraPedido({
     setInfoAutoLectura(null);
 
     try {
-      // 1. Subir archivo a Supabase Storage (o fallback DataURL)
       const ruta = `compras/${Date.now()}_${file.name.replace(/\s+/g, '_')}`;
       const { error } = await supabase.storage
         .from('documentos')
@@ -235,8 +253,11 @@ export default function ModalCompraPedido({
 
       if (!archivoNombre) setArchivoNombre(file.name);
 
-      // 2. Extraer datos reales del PDF usando lib/leerFacturaPdf.ts (pdfjs-dist)
-      if (file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf')) {
+      if (
+        file.type === 'application/pdf' ||
+        file.name.toLowerCase().endsWith('.pdf') ||
+        file.type.startsWith('image/')
+      ) {
         const detectado = await extraerDatosFacturaPdf(file);
         const camposCompletados: string[] = [];
 
@@ -254,7 +275,7 @@ export default function ModalCompraPedido({
         if (detectado.cuitDetectado) {
           setCuitProveedor(detectado.cuitDetectado);
           const cuitLimpio = detectado.cuitDetectado.replace(/\D/g, '');
-          const provMatch = proveedores.find(
+          const provMatch = listaProveedores.find(
             (pr) => String(pr.cuit || '').replace(/\D/g, '') === cuitLimpio
           );
           if (provMatch) {
@@ -426,8 +447,8 @@ export default function ModalCompraPedido({
               onSubmit={guardarCompra}
               className="px-6 py-5 overflow-y-auto space-y-4"
             >
-              {/* CORRESPONDE AL PROYECTO / OBRA */}
-              <div className="relative">
+              {/* 1. CORRESPONDE AL PROYECTO / OBRA */}
+              <div className={`relative ${dropAbierto === 'proyecto' ? 'z-[200]' : 'z-40'}`}>
                 <label className="block text-xs font-bold text-gray-200 mb-1.5">
                   Corresponde al Proyecto / Obra <span className="text-[#EAB308]">*</span>
                 </label>
@@ -460,7 +481,7 @@ export default function ModalCompraPedido({
                 </button>
 
                 {dropAbierto === 'proyecto' && !proyectoFijoCodigo && (
-                  <div className="absolute left-0 right-0 mt-1.5 bg-[#1C1C1C] border border-gray-700 rounded-2xl shadow-2xl py-2 z-50 max-h-56 overflow-y-auto">
+                  <div className="absolute left-0 right-0 mt-1.5 bg-[#1C1C1C] border border-gray-700 rounded-2xl shadow-2xl py-2 z-[210] max-h-56 overflow-y-auto">
                     <button
                       type="button"
                       onClick={() => {
@@ -494,13 +515,17 @@ export default function ModalCompraPedido({
                 )}
               </div>
 
-              {/* PROVEEDOR / CONTRATISTA + CUIT */}
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+              {/* 2. PROVEEDOR / CONTRATISTA + CUIT */}
+              <div
+                className={`grid grid-cols-1 md:grid-cols-3 gap-3 relative ${
+                  dropAbierto === 'proveedor' ? 'z-[200]' : 'z-30'
+                }`}
+              >
                 <div className="md:col-span-2 relative">
                   <label className="block text-xs font-bold text-gray-200 mb-1.5">
                     Proveedor / Contratista
                   </label>
-                  <div className="relative">
+                  <div className="w-full bg-[#1C1C1C] border border-gray-700 focus-within:border-gray-500 rounded-xl px-3.5 py-2.5 flex items-center justify-between gap-2">
                     <input
                       type="text"
                       value={proveedor}
@@ -509,27 +534,26 @@ export default function ModalCompraPedido({
                         const val = e.target.value;
                         setProveedor(val);
                         setDropAbierto('proveedor');
-                        const encontrado = proveedores.find(
+                        const encontrado = listaProveedores.find(
                           (pr) => pr.nombre.toLowerCase() === val.trim().toLowerCase()
                         );
                         if (encontrado?.cuit) setCuitProveedor(encontrado.cuit);
                       }}
                       placeholder="Proveedor general"
-                      className="w-full bg-[#1C1C1C] border border-gray-700 focus:border-gray-500 rounded-xl pl-3.5 pr-9 py-2.5 text-xs font-semibold text-white outline-none"
+                      className="w-full bg-transparent text-xs font-semibold text-white outline-none"
                     />
-                    <button
-                      type="button"
+                    <span
                       onClick={() =>
                         setDropAbierto((prev) => (prev === 'proveedor' ? null : 'proveedor'))
                       }
-                      className="absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-400 hover:text-white cursor-pointer"
+                      className="text-gray-400 hover:text-white cursor-pointer flex-shrink-0"
                     >
                       <ChevronDown className="w-4 h-4" />
-                    </button>
+                    </span>
                   </div>
 
                   {dropAbierto === 'proveedor' && (
-                    <div className="absolute left-0 right-0 mt-1.5 bg-[#1C1C1C] border border-gray-700 rounded-2xl shadow-2xl py-2 z-50 max-h-52 overflow-y-auto">
+                    <div className="absolute left-0 right-0 mt-1.5 bg-[#1C1C1C] border border-gray-700 rounded-2xl shadow-2xl py-2 z-[210] max-h-56 overflow-y-auto">
                       <button
                         type="button"
                         onClick={() => {
@@ -551,9 +575,14 @@ export default function ModalCompraPedido({
                           }}
                           className="w-full px-4 py-2.5 text-left hover:bg-white/5 cursor-pointer flex items-center justify-between gap-2"
                         >
-                          <span className="text-xs font-extrabold text-white truncate">
-                            {pr.nombre}
-                          </span>
+                          <div className="min-w-0">
+                            <div className="text-xs font-extrabold text-white truncate">
+                              {pr.nombre}
+                            </div>
+                            {pr.rubro && (
+                              <div className="text-[10px] text-gray-400 truncate">{pr.rubro}</div>
+                            )}
+                          </div>
                           {pr.cuit && (
                             <span className="text-[11px] text-gray-400 flex-shrink-0">
                               {pr.cuit}
@@ -577,8 +606,8 @@ export default function ModalCompraPedido({
                 </div>
               </div>
 
-              {/* CONCEPTO DEL PEDIDO */}
-              <div>
+              {/* 3. CONCEPTO DEL PEDIDO */}
+              <div className="relative z-10">
                 <label className="block text-xs font-bold text-gray-200 mb-1.5">
                   Concepto del Pedido <span className="text-[#EAB308]">*</span>
                 </label>
@@ -592,8 +621,12 @@ export default function ModalCompraPedido({
                 />
               </div>
 
-              {/* MONEDA + SUBTOTAL / IMPORTE + ESTADO */}
-              <div className="grid grid-cols-3 gap-3">
+              {/* 4. MONEDA + SUBTOTAL / IMPORTE + ESTADO */}
+              <div
+                className={`grid grid-cols-3 gap-3 relative ${
+                  dropAbierto === 'moneda' || dropAbierto === 'estado' ? 'z-[200]' : 'z-20'
+                }`}
+              >
                 <div className="relative">
                   <label className="block text-xs font-bold text-gray-200 mb-1.5">
                     Moneda <span className="text-[#EAB308]">*</span>
@@ -609,7 +642,7 @@ export default function ModalCompraPedido({
                     <ChevronDown className="w-4 h-4 text-gray-400" />
                   </button>
                   {dropAbierto === 'moneda' && (
-                    <div className="absolute left-0 right-0 mt-1.5 bg-[#1C1C1C] border border-gray-700 rounded-2xl shadow-2xl py-1.5 z-50">
+                    <div className="absolute left-0 right-0 mt-1.5 bg-[#1C1C1C] border border-gray-700 rounded-2xl shadow-2xl py-1.5 z-[210]">
                       {OPCIONES_MONEDA.map((m) => (
                         <button
                           key={m}
@@ -654,7 +687,7 @@ export default function ModalCompraPedido({
                     <ChevronDown className="w-4 h-4 text-gray-400 flex-shrink-0" />
                   </button>
                   {dropAbierto === 'estado' && (
-                    <div className="absolute left-0 right-0 mt-1.5 bg-[#1C1C1C] border border-gray-700 rounded-2xl shadow-2xl py-1.5 z-50">
+                    <div className="absolute left-0 right-0 mt-1.5 bg-[#1C1C1C] border border-gray-700 rounded-2xl shadow-2xl py-1.5 z-[210]">
                       {OPCIONES_ESTADO.map((est) => (
                         <button
                           key={est}
@@ -673,8 +706,8 @@ export default function ModalCompraPedido({
                 </div>
               </div>
 
-              {/* COTIZACIÓN AUTOMÁTICA DÓLAR DE LA FECHA + EQUIVALENTE USD */}
-              <div className="bg-[#1C1C1C] border border-gray-800 rounded-xl px-3.5 py-2.5 flex flex-wrap items-center justify-between gap-2 text-xs">
+              {/* 5. COTIZACIÓN AUTOMÁTICA DÓLAR DE LA FECHA + EQUIVALENTE USD */}
+              <div className="bg-[#1C1C1C] border border-gray-800 rounded-xl px-3.5 py-2.5 flex flex-wrap items-center justify-between gap-2 text-xs relative z-10">
                 <div className="flex items-center gap-2">
                   <span className="text-gray-400">
                     Dólar BNA ({fecha.split('-').reverse().join('/')}):
@@ -704,12 +737,16 @@ export default function ModalCompraPedido({
                 </div>
               </div>
 
-              <p className="text-[11px] text-gray-400 -mt-2">
+              <p className="text-[11px] text-gray-400 -mt-2 relative z-10">
                 Esta compra se registra automáticamente como Egreso en Finanzas y en el balance del proyecto.
               </p>
 
-              {/* FECHA + NRO. ORDEN / FACTURA + TIPO DE COMPROBANTE */}
-              <div className="grid grid-cols-3 gap-3">
+              {/* 6. FECHA + NRO. ORDEN / FACTURA + TIPO DE COMPROBANTE */}
+              <div
+                className={`grid grid-cols-3 gap-3 relative ${
+                  dropAbierto === 'comprobante' ? 'z-[200]' : 'z-20'
+                }`}
+              >
                 <div>
                   <label className="block text-xs font-bold text-gray-200 mb-1.5">Fecha</label>
                   <input
@@ -752,7 +789,7 @@ export default function ModalCompraPedido({
                     <ChevronDown className="w-4 h-4 text-gray-400 flex-shrink-0" />
                   </button>
                   {dropAbierto === 'comprobante' && (
-                    <div className="absolute left-0 right-0 mt-1.5 bg-[#1C1C1C] border border-gray-700 rounded-2xl shadow-2xl py-1.5 z-50">
+                    <div className="absolute left-0 right-0 mt-1.5 bg-[#1C1C1C] border border-gray-700 rounded-2xl shadow-2xl py-1.5 z-[210]">
                       {OPCIONES_COMPROBANTE.map((tc) => (
                         <button
                           key={tc}
@@ -771,8 +808,8 @@ export default function ModalCompraPedido({
                 </div>
               </div>
 
-              {/* COMPROBANTE ADJUNTO (FACTURA) */}
-              <div className="bg-[#1C1C1C] border border-gray-800 rounded-2xl p-4 space-y-3">
+              {/* 7. COMPROBANTE ADJUNTO (FACTURA) */}
+              <div className="bg-[#1C1C1C] border border-gray-800 rounded-2xl p-4 space-y-3 relative z-10">
                 <div>
                   <div className="text-xs font-bold text-white flex items-center gap-1.5">
                     <Paperclip className="w-3.5 h-3.5 text-[#EAB308]" />
@@ -864,8 +901,8 @@ export default function ModalCompraPedido({
                 </div>
               </div>
 
-              {/* DETALLE / NOTAS DE ENTREGA */}
-              <div>
+              {/* 8. DETALLE / NOTAS DE ENTREGA */}
+              <div className="relative z-10">
                 <label className="block text-xs font-bold text-gray-200 mb-1.5">
                   Detalle / Notas de Entrega
                 </label>
@@ -879,7 +916,7 @@ export default function ModalCompraPedido({
               </div>
 
               {/* PIE DE ACCIONES */}
-              <div className="flex justify-between items-center pt-3 border-t border-gray-800">
+              <div className="flex justify-between items-center pt-3 border-t border-gray-800 relative z-10">
                 <div>
                   {compraEditando && (
                     <button

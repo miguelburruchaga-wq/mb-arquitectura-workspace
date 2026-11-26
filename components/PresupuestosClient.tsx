@@ -2,9 +2,15 @@
 
 import { useState, useMemo, useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
+import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { supabase } from '@/lib/supabase';
 import { moverAPapelera } from '@/lib/papelera';
+import {
+  TONOS_ALARMA,
+  reproducirSonidoAlarmaVisita,
+  lanzarNotificacionSistema,
+} from '@/components/ModalVisita';
 import VisorArchivoModal from '@/components/VisorArchivoModal';
 import {
   Plus,
@@ -14,6 +20,9 @@ import {
   Calendar as CalendarIcon,
   Flag,
   ChevronDown,
+  ChevronLeft,
+  ChevronRight,
+  RefreshCw,
   Edit3,
   Trash2,
   X,
@@ -23,6 +32,9 @@ import {
   Link2,
   FileText,
   Loader2,
+  Eye,
+  Bell,
+  Volume2,
 } from 'lucide-react';
 
 export const ESTADOS_PRESUPUESTO = [
@@ -48,6 +60,21 @@ export const TIPOLOGIAS_OBRA = [
   'Urbanismo / Exterior',
   'Otro',
 ] as const;
+
+const MESES_LARGO = [
+  'Enero',
+  'Febrero',
+  'Marzo',
+  'Abril',
+  'Mayo',
+  'Junio',
+  'Julio',
+  'Agosto',
+  'Septiembre',
+  'Octubre',
+  'Noviembre',
+  'Diciembre',
+];
 
 function estiloEstado(estado: string) {
   switch (estado) {
@@ -127,10 +154,7 @@ function parsearNum(valor: string | number): number {
   if (typeof valor === 'number') return valor;
   const s = String(valor || '').trim();
   if (!s) return 0;
-  if (s.includes(',')) return parseFloat(s.replace(/\./g, '').replace(',', '.')) || 0;
-  const puntos = (s.match(/\./g) || []).length;
-  if (puntos > 1) return parseFloat(s.replace(/\./g, '')) || 0;
-  return parseFloat(s) || 0;
+  return parseFloat(s.replace(/\./g, '').replace(',', '.')) || 0;
 }
 
 function formatearFechaCorta(iso?: string | null) {
@@ -159,10 +183,29 @@ export default function PresupuestosClient({
   const [filtroPrioridad, setFiltroPrioridad] = useState('Todas');
   const [filtroAsignado, setFiltroAsignado] = useState('Todos');
 
-  // Visor PDF integrado
+  const [escalaCrono, setEscalaCrono] = useState<
+    'Semana' | 'Mes' | 'Trimestre' | 'Semestre' | 'Año'
+  >('Semestre');
+  const [offsetCrono, setOffsetCrono] = useState(0);
+
+  const [dropAbierto, setDropAbierto] = useState<
+    | null
+    | 'filtroEstado'
+    | 'filtroPrioridad'
+    | 'filtroAsignado'
+    | 'cliente'
+    | 'tipologia'
+    | 'moneda'
+    | 'persona'
+    | 'prioridad'
+    | 'estado'
+  >(null);
+
+  const refBarraFiltros = useRef<HTMLDivElement>(null);
+  const refModalForm = useRef<HTMLFormElement>(null);
+
   const [visorArchivo, setVisorArchivo] = useState<{ url: string; titulo: string } | null>(null);
 
-  // Modal Nuevo / Editar Presupuesto
   const [modalAbierto, setModalAbierto] = useState(false);
   const [editando, setEditando] = useState<any | null>(null);
   const [guardando, setGuardando] = useState(false);
@@ -184,11 +227,12 @@ export default function PresupuestosClient({
   const [archivoNombre, setArchivoNombre] = useState('');
   const [notas, setNotas] = useState('');
 
-  // Dropdowns personalizados en modal
-  const [dropPersonaAbierto, setDropPersonaAbierto] = useState(false);
-  const [dropPrioridadAbierto, setDropPrioridadAbierto] = useState(false);
-  const refPersona = useRef<HTMLDivElement>(null);
-  const refPrioridad = useRef<HTMLDivElement>(null);
+  const [alarmaActiva, setAlarmaActiva] = useState(false);
+  const [alarmaFecha, setAlarmaFecha] = useState('');
+  const [alarmaHora, setAlarmaHora] = useState('09:00');
+  const [alarmaTono, setAlarmaTono] = useState<string>('Campana Suave');
+  const [alarmaVolumen, setAlarmaVolumen] = useState<number>(80);
+  const [alarmaSonando, setAlarmaSonando] = useState<any | null>(null);
 
   const [toast, setToast] = useState<string | null>(null);
 
@@ -200,13 +244,67 @@ export default function PresupuestosClient({
     setPresupuestos(presupuestosIniciales);
   }, [presupuestosIniciales]);
 
+  // Monitor en tiempo real de alarmas de Presupuestos
+  useEffect(() => {
+    const revisarAlarmas = () => {
+      const ahora = new Date();
+      const yyyy = ahora.getFullYear();
+      const mm = String(ahora.getMonth() + 1).padStart(2, '0');
+      const dd = String(ahora.getDate()).padStart(2, '0');
+      const hh = String(ahora.getHours()).padStart(2, '0');
+      const min = String(ahora.getMinutes()).padStart(2, '0');
+      const fechaActual = `${yyyy}-${mm}-${dd}`;
+      const horaActual = `${hh}:${min}`;
+
+      for (const p of presupuestos) {
+        if (!p.alarma_activa || !p.alarma_fecha || !p.alarma_hora) continue;
+        const claveDisparo = `mb_alarma_pre_${p.id}_${p.alarma_fecha}_${p.alarma_hora}`;
+        if (localStorage.getItem(claveDisparo)) continue;
+
+        if (
+          p.alarma_fecha < fechaActual ||
+          (p.alarma_fecha === fechaActual && p.alarma_hora <= horaActual)
+        ) {
+          localStorage.setItem(claveDisparo, '1');
+          setAlarmaSonando(p);
+          break;
+        }
+      }
+    };
+
+    revisarAlarmas();
+    const timer = setInterval(revisarAlarmas, 5000);
+    return () => clearInterval(timer);
+  }, [presupuestos]);
+
+  // Bucle sonoro continuo + notificación de Windows por encima de cualquier ventana
+  useEffect(() => {
+    if (!alarmaSonando) return;
+
+    const tono = alarmaSonando.alarma_tono || 'Campana Suave';
+    const vol =
+      typeof alarmaSonando.alarma_volumen === 'number' ? alarmaSonando.alarma_volumen : 80;
+
+    reproducirSonidoAlarmaVisita(tono, vol);
+    lanzarNotificacionSistema(
+      '🔔 Recordatorio de Presupuesto',
+      `${alarmaSonando.codigo} · ${alarmaSonando.titulo} (${alarmaSonando.alarma_hora} hs)`
+    );
+
+    const loopSonido = setInterval(() => {
+      reproducirSonidoAlarmaVisita(tono, vol);
+    }, 2200);
+
+    return () => clearInterval(loopSonido);
+  }, [alarmaSonando]);
+
   useEffect(() => {
     const onClickOutside = (e: MouseEvent) => {
-      if (refPersona.current && !refPersona.current.contains(e.target as Node)) {
-        setDropPersonaAbierto(false);
-      }
-      if (refPrioridad.current && !refPrioridad.current.contains(e.target as Node)) {
-        setDropPrioridadAbierto(false);
+      const target = e.target as Node;
+      const dentroFiltros = refBarraFiltros.current?.contains(target);
+      const dentroModal = refModalForm.current?.contains(target);
+      if (!dentroFiltros && !dentroModal) {
+        setDropAbierto(null);
       }
     };
     document.addEventListener('mousedown', onClickOutside);
@@ -231,6 +329,7 @@ export default function PresupuestosClient({
   const abrirNuevo = () => {
     const hoy = new Date().toISOString().split('T')[0];
     setEditando(null);
+    setDropAbierto(null);
     setCodigo(generarCodigo());
     setTitulo('');
     setClienteId('');
@@ -246,11 +345,17 @@ export default function PresupuestosClient({
     setArchivoUrl('');
     setArchivoNombre('');
     setNotas('');
+    setAlarmaActiva(false);
+    setAlarmaFecha(hoy);
+    setAlarmaHora('09:00');
+    setAlarmaTono('Campana Suave');
+    setAlarmaVolumen(80);
     setModalAbierto(true);
   };
 
   const abrirEditar = (p: any) => {
     setEditando(p);
+    setDropAbierto(null);
     setCodigo(p.codigo || '');
     setTitulo(p.titulo || '');
     setClienteId(p.cliente_id ? String(p.cliente_id) : '');
@@ -274,6 +379,11 @@ export default function PresupuestosClient({
     setArchivoUrl(p.archivo_url || '');
     setArchivoNombre(p.archivo_nombre || '');
     setNotas(p.notas || '');
+    setAlarmaActiva(Boolean(p.alarma_activa));
+    setAlarmaFecha(p.alarma_fecha || p.fecha_limite || '');
+    setAlarmaHora(p.alarma_hora || '09:00');
+    setAlarmaTono(p.alarma_tono || 'Campana Suave');
+    setAlarmaVolumen(typeof p.alarma_volumen === 'number' ? p.alarma_volumen : 80);
     setModalAbierto(true);
   };
 
@@ -332,6 +442,11 @@ export default function PresupuestosClient({
         archivo_url: archivoUrl.trim() || null,
         archivo_nombre: archivoNombre.trim() || null,
         notas: notas.trim() || null,
+        alarma_activa: alarmaActiva,
+        alarma_fecha: alarmaActiva ? alarmaFecha || null : null,
+        alarma_hora: alarmaActiva ? alarmaHora || null : null,
+        alarma_tono: alarmaTono,
+        alarma_volumen: alarmaVolumen,
       };
 
       if (editando) {
@@ -408,51 +523,84 @@ export default function PresupuestosClient({
     });
   }, [presupuestos, busqueda, filtroEstado, filtroPrioridad, filtroAsignado]);
 
-  // Rango temporal para vista Cronograma
-  const rangoCrono = useMemo(() => {
-    const fechas: number[] = [Date.now()];
-    filtrados.forEach((p) => {
-      [p.fecha_llegada, p.fecha_inicio, p.fecha_limite].forEach((f) => {
-        if (f) {
-          const t = new Date(f + 'T00:00:00').getTime();
-          if (!Number.isNaN(t)) fechas.push(t);
-        }
-      });
-    });
-    const minD = new Date(Math.min(...fechas));
-    minD.setDate(1);
-    const maxD = new Date(Math.max(...fechas));
-    maxD.setDate(1);
-    maxD.setMonth(maxD.getMonth() + 2);
+  const cronoData = useMemo(() => {
+    const hoy = new Date();
+    const hoyDia = hoy.getDate();
+    const hoyMs = new Date(hoy.getFullYear(), hoy.getMonth(), hoy.getDate(), 12, 0, 0).getTime();
 
-    const meses: { key: string; label: string; start: number; end: number }[] = [];
-    const cur = new Date(minD);
-    while (cur <= maxD && meses.length < 18) {
-      const y = cur.getFullYear();
-      const m = cur.getMonth();
-      meses.push({
-        key: `${y}-${m}`,
-        label: cur.toLocaleDateString('es-AR', { month: 'short', year: '2-digit' }),
-        start: new Date(y, m, 1).getTime(),
-        end: new Date(y, m + 1, 1).getTime(),
+    if (escalaCrono === 'Semana') {
+      const base = new Date(hoy);
+      base.setDate(hoy.getDate() - hoy.getDay() + 1 + offsetCrono * 7);
+      const bloques = Array.from({ length: 7 }, (_, i) => {
+        const d = new Date(base);
+        d.setDate(base.getDate() + i);
+        const titulo =
+          i === 0
+            ? `${MESES_LARGO[d.getMonth()]} De ${d.getFullYear()}`
+            : d.toLocaleDateString('es-AR', { weekday: 'short' });
+        return {
+          key: d.toISOString(),
+          titulo,
+          subMarcas: [String(d.getDate())],
+          startMs: new Date(d.getFullYear(), d.getMonth(), d.getDate(), 0, 0, 0).getTime(),
+          endMs: new Date(d.getFullYear(), d.getMonth(), d.getDate(), 23, 59, 59).getTime(),
+        };
       });
-      cur.setMonth(cur.getMonth() + 1);
+      const startMs = bloques[0].startMs;
+      const endMs = bloques[bloques.length - 1].endMs;
+      const hoyPct = ((hoyMs - startMs) / Math.max(1, endMs - startMs)) * 100;
+      return { bloques, startMs, endMs, hoyPct, hoyDia };
     }
-    return {
-      meses,
-      startMs: meses[0]?.start || Date.now(),
-      endMs: meses[meses.length - 1]?.end || Date.now() + 86400000 * 90,
-    };
-  }, [filtrados]);
+
+    const cantMeses =
+      escalaCrono === 'Mes'
+        ? 1
+        : escalaCrono === 'Trimestre'
+        ? 3
+        : escalaCrono === 'Semestre'
+        ? 7
+        : 12;
+
+    const desplazamientoInicial =
+      escalaCrono === 'Semestre' ? -3 : escalaCrono === 'Trimestre' ? -1 : 0;
+
+    const bloques = Array.from({ length: cantMeses }, (_, i) => {
+      const mDate = new Date(
+        hoy.getFullYear(),
+        hoy.getMonth() + desplazamientoInicial + offsetCrono + i,
+        1
+      );
+      const y = mDate.getFullYear();
+      const m = mDate.getMonth();
+      const titulo = i === 0 ? `${MESES_LARGO[m]} De ${y}` : MESES_LARGO[m];
+      return {
+        key: `${y}-${m}`,
+        titulo,
+        subMarcas: ['2', '9', '16', '23', '30'],
+        startMs: new Date(y, m, 1, 0, 0, 0).getTime(),
+        endMs: new Date(y, m + 1, 0, 23, 59, 59).getTime(),
+      };
+    });
+
+    const startMs = bloques[0].startMs;
+    const endMs = bloques[bloques.length - 1].endMs;
+    const hoyPct = ((hoyMs - startMs) / Math.max(1, endMs - startMs)) * 100;
+
+    return { bloques, startMs, endMs, hoyPct, hoyDia };
+  }, [escalaCrono, offsetCrono]);
 
   const personaSeleccionadaObj = useMemo(
     () => equipo.find((m) => m.nombre === asignadoNombre),
     [equipo, asignadoNombre]
   );
 
+  const clienteSeleccionadoObj = useMemo(
+    () => clientes.find((c) => String(c.id) === String(clienteId)),
+    [clientes, clienteId]
+  );
+
   return (
     <div className="min-h-screen text-white p-8 font-sans">
-      {/* ENCABEZADO */}
       <div className="flex flex-wrap justify-between items-start gap-4 mb-6">
         <div>
           <h1 className="text-3xl font-extrabold tracking-tight text-white">Presupuestos</h1>
@@ -470,7 +618,6 @@ export default function PresupuestosClient({
         </button>
       </div>
 
-      {/* SELECTOR DE VISTAS */}
       <div className="flex flex-wrap justify-between items-center gap-4 mb-5">
         <div className="bg-[#242424] border border-white/10 rounded-xl p-1 inline-flex gap-1">
           {[
@@ -499,8 +646,10 @@ export default function PresupuestosClient({
         </span>
       </div>
 
-      {/* BARRA DE FILTROS */}
-      <div className="bg-[#242424] border border-white/10 rounded-2xl p-4 mb-6 flex flex-wrap items-center gap-3">
+      <div
+        ref={refBarraFiltros}
+        className="bg-[#242424] border border-white/10 rounded-2xl p-4 mb-6 flex flex-wrap items-center gap-3 relative z-30"
+      >
         <div className="relative flex-1 min-w-[220px]">
           <Search className="w-4 h-4 text-gray-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
           <input
@@ -512,44 +661,114 @@ export default function PresupuestosClient({
           />
         </div>
 
-        <select
-          value={filtroEstado}
-          onChange={(e) => setFiltroEstado(e.target.value)}
-          className="bg-[#181818] border border-white/10 rounded-xl px-3 py-2 text-xs font-semibold text-white cursor-pointer"
-        >
-          <option value="Todos">Estado: Todos</option>
-          {ESTADOS_PRESUPUESTO.map((est) => (
-            <option key={est} value={est}>
-              {est}
-            </option>
-          ))}
-        </select>
+        <div className={`relative ${dropAbierto === 'filtroEstado' ? 'z-[100]' : 'z-10'}`}>
+          <button
+            type="button"
+            onClick={() =>
+              setDropAbierto((prev) => (prev === 'filtroEstado' ? null : 'filtroEstado'))
+            }
+            className="bg-[#181818] border border-white/10 hover:border-white/25 rounded-xl px-3.5 py-2 text-xs font-semibold text-white inline-flex items-center gap-2 cursor-pointer"
+          >
+            <span>Estado: {filtroEstado}</span>
+            <ChevronDown className="w-3.5 h-3.5 text-gray-400" />
+          </button>
+          {dropAbierto === 'filtroEstado' && (
+            <div className="absolute right-0 mt-1.5 w-48 bg-[#1C1C1C] border border-gray-700 rounded-2xl shadow-2xl py-1.5 z-[110]">
+              {(['Todos', ...ESTADOS_PRESUPUESTO] as const).map((est) => (
+                <button
+                  key={est}
+                  type="button"
+                  onClick={() => {
+                    setFiltroEstado(est);
+                    setDropAbierto(null);
+                  }}
+                  className="w-full px-4 py-2 text-left text-xs font-bold text-white hover:bg-white/5 cursor-pointer"
+                >
+                  {est === 'Todos' ? 'Estado: Todos' : est}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
 
-        <select
-          value={filtroPrioridad}
-          onChange={(e) => setFiltroPrioridad(e.target.value)}
-          className="bg-[#181818] border border-white/10 rounded-xl px-3 py-2 text-xs font-semibold text-white cursor-pointer"
-        >
-          <option value="Todas">Prioridad: Todas</option>
-          {PRIORIDADES_PRESUPUESTO.map((pr) => (
-            <option key={pr} value={pr}>
-              {pr}
-            </option>
-          ))}
-        </select>
+        <div className={`relative ${dropAbierto === 'filtroPrioridad' ? 'z-[100]' : 'z-10'}`}>
+          <button
+            type="button"
+            onClick={() =>
+              setDropAbierto((prev) => (prev === 'filtroPrioridad' ? null : 'filtroPrioridad'))
+            }
+            className="bg-[#181818] border border-white/10 hover:border-white/25 rounded-xl px-3.5 py-2 text-xs font-semibold text-white inline-flex items-center gap-2 cursor-pointer"
+          >
+            <span>Prioridad: {filtroPrioridad}</span>
+            <ChevronDown className="w-3.5 h-3.5 text-gray-400" />
+          </button>
+          {dropAbierto === 'filtroPrioridad' && (
+            <div className="absolute right-0 mt-1.5 w-48 bg-[#1C1C1C] border border-gray-700 rounded-2xl shadow-2xl py-1.5 z-[110]">
+              {(['Todas', ...PRIORIDADES_PRESUPUESTO] as const).map((pr) => (
+                <button
+                  key={pr}
+                  type="button"
+                  onClick={() => {
+                    setFiltroPrioridad(pr);
+                    setDropAbierto(null);
+                  }}
+                  className="w-full px-4 py-2 text-left text-xs font-bold text-white hover:bg-white/5 cursor-pointer flex items-center gap-2"
+                >
+                  {pr !== 'Todas' && (
+                    <Flag
+                      className="w-3.5 h-3.5"
+                      style={{
+                        color: estiloPrioridad(pr).fill,
+                        fill: estiloPrioridad(pr).fill,
+                      }}
+                    />
+                  )}
+                  <span>{pr === 'Todas' ? 'Prioridad: Todas' : pr}</span>
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
 
-        <select
-          value={filtroAsignado}
-          onChange={(e) => setFiltroAsignado(e.target.value)}
-          className="bg-[#181818] border border-white/10 rounded-xl px-3 py-2 text-xs font-semibold text-white cursor-pointer"
-        >
-          <option value="Todos">Asignado: Todos</option>
-          {equipo.map((m) => (
-            <option key={m.id} value={m.nombre}>
-              {m.nombre}
-            </option>
-          ))}
-        </select>
+        <div className={`relative ${dropAbierto === 'filtroAsignado' ? 'z-[100]' : 'z-10'}`}>
+          <button
+            type="button"
+            onClick={() =>
+              setDropAbierto((prev) => (prev === 'filtroAsignado' ? null : 'filtroAsignado'))
+            }
+            className="bg-[#181818] border border-white/10 hover:border-white/25 rounded-xl px-3.5 py-2 text-xs font-semibold text-white inline-flex items-center gap-2 cursor-pointer"
+          >
+            <span>Asignado: {filtroAsignado}</span>
+            <ChevronDown className="w-3.5 h-3.5 text-gray-400" />
+          </button>
+          {dropAbierto === 'filtroAsignado' && (
+            <div className="absolute right-0 mt-1.5 w-56 bg-[#1C1C1C] border border-gray-700 rounded-2xl shadow-2xl py-1.5 z-[110] max-h-60 overflow-y-auto">
+              <button
+                type="button"
+                onClick={() => {
+                  setFiltroAsignado('Todos');
+                  setDropAbierto(null);
+                }}
+                className="w-full px-4 py-2 text-left text-xs font-bold text-white hover:bg-white/5 cursor-pointer"
+              >
+                Asignado: Todos
+              </button>
+              {equipo.map((m) => (
+                <button
+                  key={m.id}
+                  type="button"
+                  onClick={() => {
+                    setFiltroAsignado(m.nombre);
+                    setDropAbierto(null);
+                  }}
+                  className="w-full px-4 py-2 text-left text-xs font-bold text-white hover:bg-white/5 cursor-pointer"
+                >
+                  {m.nombre}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
       </div>
 
       {/* VISTA 1: LISTA */}
@@ -585,11 +804,24 @@ export default function PresupuestosClient({
                     const foto = miembro?.foto_url || p.asignado_foto;
 
                     return (
-                      <tr key={p.id} className="hover:bg-white/5 transition-colors">
+                      <tr
+                        key={p.id}
+                        onClick={() => abrirEditar(p)}
+                        className="hover:bg-white/5 transition-colors cursor-pointer"
+                      >
                         <td className="py-3.5 px-4">
-                          <div className="font-extrabold text-white">
-                            <span className="text-[#EAB308] mr-1.5">{p.codigo}</span>
-                            {p.titulo}
+                          <div className="font-extrabold text-white flex items-center gap-1.5">
+                            <span className="text-[#EAB308]">{p.codigo}</span>
+                            <span>{p.titulo}</span>
+                            {p.alarma_activa && (
+                              <span
+                                title={`Alarma: ${formatearFechaCorta(p.alarma_fecha)} ${
+                                  p.alarma_hora
+                                }`}
+                              >
+                                <Bell className="w-3.5 h-3.5 text-[#EAB308]" />
+                              </span>
+                            )}
                           </div>
                           <div className="text-[11px] text-gray-400">
                             {p.cliente_nombre || 'Sin cliente'}{' '}
@@ -642,7 +874,7 @@ export default function PresupuestosClient({
                           </span>
                         </td>
 
-                        <td className="py-3.5 px-4">
+                        <td className="py-3.5 px-4" onClick={(e) => e.stopPropagation()}>
                           <select
                             value={p.estado || 'Pendiente'}
                             onChange={(e) => cambiarEstadoRapido(p, e.target.value)}
@@ -668,12 +900,13 @@ export default function PresupuestosClient({
                             {p.archivo_url && (
                               <button
                                 type="button"
-                                onClick={() =>
+                                onClick={(e) => {
+                                  e.stopPropagation();
                                   setVisorArchivo({
                                     url: p.archivo_url,
                                     titulo: p.archivo_nombre || `${p.codigo} · ${p.titulo}`,
-                                  })
-                                }
+                                  });
+                                }}
                                 className="px-2 py-1 rounded-lg bg-blue-500/15 border border-blue-500/40 text-blue-400 hover:bg-blue-500/25 font-bold inline-flex items-center gap-1 cursor-pointer"
                                 title={p.archivo_nombre || 'Ver archivo adjunto'}
                               >
@@ -683,7 +916,10 @@ export default function PresupuestosClient({
 
                             <button
                               type="button"
-                              onClick={() => abrirEditar(p)}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                abrirEditar(p);
+                              }}
                               className="p-1.5 rounded-lg hover:bg-white/10 text-gray-300 cursor-pointer"
                               title="Editar"
                             >
@@ -691,7 +927,10 @@ export default function PresupuestosClient({
                             </button>
                             <button
                               type="button"
-                              onClick={() => eliminarPresupuesto(p)}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                eliminarPresupuesto(p);
+                              }}
                               className="p-1.5 rounded-lg bg-rose-500/15 border border-rose-500/40 text-rose-400 hover:bg-rose-500/25 cursor-pointer"
                               title="Enviar a papelera"
                             >
@@ -709,7 +948,7 @@ export default function PresupuestosClient({
         </div>
       )}
 
-      {/* VISTA 2: TABLERO KANBAN POR ESTADO */}
+      {/* VISTA 2: TABLERO KANBAN */}
       {vista === 'kanban' && (
         <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-5 gap-4">
           {ESTADOS_PRESUPUESTO.map((estCol) => {
@@ -745,7 +984,8 @@ export default function PresupuestosClient({
                       return (
                         <div
                           key={p.id}
-                          className="bg-[#181818] border border-white/10 hover:border-white/25 rounded-xl p-3.5 space-y-2.5 shadow"
+                          onClick={() => abrirEditar(p)}
+                          className="bg-[#181818] border border-white/10 hover:border-white/25 rounded-xl p-3.5 space-y-2.5 shadow cursor-pointer transition-colors"
                         >
                           <div className="flex items-center justify-between">
                             <span className="text-[10px] font-extrabold text-[#EAB308]">
@@ -808,12 +1048,13 @@ export default function PresupuestosClient({
                               {p.archivo_url && (
                                 <button
                                   type="button"
-                                  onClick={() =>
+                                  onClick={(e) => {
+                                    e.stopPropagation();
                                     setVisorArchivo({
                                       url: p.archivo_url,
                                       titulo: p.archivo_nombre || p.titulo,
-                                    })
-                                  }
+                                    });
+                                  }}
                                   className="p-1 rounded hover:bg-blue-950/60 text-blue-400 cursor-pointer"
                                   title="Ver PDF"
                                 >
@@ -822,14 +1063,10 @@ export default function PresupuestosClient({
                               )}
                               <button
                                 type="button"
-                                onClick={() => abrirEditar(p)}
-                                className="p-1 rounded hover:bg-white/10 text-gray-400 hover:text-white cursor-pointer"
-                              >
-                                <Edit3 className="w-3 h-3" />
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => eliminarPresupuesto(p)}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  eliminarPresupuesto(p);
+                                }}
                                 className="p-1 rounded hover:bg-rose-950/60 text-rose-400 cursor-pointer"
                               >
                                 <Trash2 className="w-3 h-3" />
@@ -849,90 +1086,225 @@ export default function PresupuestosClient({
 
       {/* VISTA 3: CRONOGRAMA */}
       {vista === 'cronograma' && (
-        <div className="bg-[#242424] border border-white/10 rounded-2xl p-5 shadow-xl overflow-x-auto">
-          <table className="w-full text-left border-collapse min-w-[960px]">
-            <thead>
-              <tr className="bg-[#181818] border-b border-white/10 text-[10px] font-extrabold uppercase tracking-wider text-gray-300">
-                <th className="py-3 px-3 w-56">PRESUPUESTO</th>
-                <th className="py-3 px-2 w-28">INICIO</th>
-                <th className="py-3 px-2 w-28">LÍMITE</th>
-                <th className="py-3 px-2 w-32">ESTADO</th>
-                <th className="py-2 px-2">
-                  <div className="grid grid-flow-col auto-cols-fr text-center border-l border-white/10">
-                    {rangoCrono.meses.map((m) => (
+        <div className="bg-[#16181D] border border-white/10 rounded-2xl overflow-hidden shadow-2xl">
+          <div className="px-5 py-3.5 border-b border-white/10 flex flex-wrap justify-between items-center gap-3">
+            <button
+              type="button"
+              onClick={() => setOffsetCrono(0)}
+              className="bg-[#1E2028] hover:bg-white/10 border border-white/10 text-white px-3.5 py-2 rounded-xl text-xs font-extrabold inline-flex items-center gap-2 cursor-pointer"
+            >
+              <RefreshCw className="w-3.5 h-3.5 text-[#D4EE36]" />
+              <span>Cronograma</span>
+            </button>
+
+            <div className="flex flex-wrap items-center gap-2.5">
+              <Link
+                href="/agenda"
+                className="bg-[#1E2028] hover:bg-white/10 border border-white/10 text-white px-3.5 py-2 rounded-xl text-xs font-extrabold inline-flex items-center gap-2"
+              >
+                <CalendarIcon className="w-3.5 h-3.5 text-[#D4EE36]" />
+                <span>Gestionar en el Calendario</span>
+              </Link>
+
+              <div className="bg-[#1E2028] border border-white/10 rounded-xl p-1 inline-flex items-center gap-0.5">
+                {(['Semana', 'Mes', 'Trimestre', 'Semestre', 'Año'] as const).map((esc) => (
+                  <button
+                    key={esc}
+                    type="button"
+                    onClick={() => {
+                      setEscalaCrono(esc);
+                      setOffsetCrono(0);
+                    }}
+                    className={`px-3 py-1 rounded-lg text-xs font-extrabold transition-colors cursor-pointer ${
+                      escalaCrono === esc
+                        ? 'bg-[#D4EE36] text-black shadow'
+                        : 'text-gray-300 hover:text-white'
+                    }`}
+                  >
+                    {esc}
+                  </button>
+                ))}
+              </div>
+
+              <div className="bg-[#1E2028] border border-white/10 rounded-xl px-2 py-1.5 inline-flex items-center gap-2.5 text-xs font-extrabold text-white">
+                <button
+                  type="button"
+                  onClick={() => setOffsetCrono((v) => v - 1)}
+                  className="p-0.5 text-gray-400 hover:text-white cursor-pointer"
+                  title="Período anterior"
+                >
+                  <ChevronLeft className="w-3.5 h-3.5" />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setOffsetCrono(0)}
+                  className="px-1.5 hover:text-[#D4EE36] cursor-pointer"
+                >
+                  Hoy
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setOffsetCrono((v) => v + 1)}
+                  className="p-0.5 text-gray-400 hover:text-white cursor-pointer"
+                  title="Período siguiente"
+                >
+                  <ChevronRight className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <div className="overflow-x-auto">
+            <div className="min-w-[1060px] relative">
+              <div className="grid grid-cols-12 border-b border-white/10 bg-[#1B1D24]">
+                <div className="col-span-3 px-4 py-3 border-r border-white/10 flex items-end text-[11px] font-extrabold uppercase tracking-wider text-gray-400">
+                  Presupuesto / Responsable
+                </div>
+
+                <div className="col-span-9 relative">
+                  <div
+                    className="grid"
+                    style={{
+                      gridTemplateColumns: `repeat(${cronoData.bloques.length}, minmax(0, 1fr))`,
+                    }}
+                  >
+                    {cronoData.bloques.map((b) => (
                       <div
-                        key={m.key}
-                        className="px-1 py-1 border-r border-white/10 text-[10px] font-bold text-gray-400"
+                        key={b.key}
+                        className="border-r border-white/10 last:border-r-0 px-3 pt-2.5 pb-2"
                       >
-                        {m.label}
+                        <div className="text-xs font-extrabold text-white truncate">
+                          {b.titulo}
+                        </div>
+                        <div className="flex justify-between items-center text-[10px] font-semibold text-gray-400 mt-2">
+                          {b.subMarcas.map((dia, idx) => (
+                            <span key={idx}>{dia}</span>
+                          ))}
+                        </div>
                       </div>
                     ))}
                   </div>
-                </th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-white/10 text-xs">
-              {filtrados.map((p) => {
-                const iniStr = p.fecha_inicio || p.fecha_llegada;
-                const finStr = p.fecha_limite || iniStr;
-                const estStyle = estiloEstado(p.estado);
 
-                let leftPct = 0;
-                let widthPct = 0;
-                if (iniStr) {
-                  const s = new Date(iniStr + 'T00:00:00').getTime();
-                  const e = finStr ? new Date(finStr + 'T23:59:59').getTime() : s + 86400000 * 7;
-                  const span = Math.max(1, rangoCrono.endMs - rangoCrono.startMs);
-                  leftPct = Math.max(0, Math.min(96, ((s - rangoCrono.startMs) / span) * 100));
-                  const rightPct = Math.max(
-                    leftPct + 3,
-                    Math.min(100, ((e - rangoCrono.startMs) / span) * 100)
-                  );
-                  widthPct = Math.max(3, rightPct - leftPct);
-                }
+                  {cronoData.hoyPct >= 0 && cronoData.hoyPct <= 100 && (
+                    <div
+                      style={{ left: `${cronoData.hoyPct}%` }}
+                      className="absolute -bottom-2.5 -translate-x-1/2 z-20 w-5 h-5 rounded-full bg-rose-500 text-white text-[10px] font-black flex items-center justify-center shadow-lg"
+                    >
+                      {cronoData.hoyDia}
+                    </div>
+                  )}
+                </div>
+              </div>
 
-                return (
-                  <tr key={p.id} className="hover:bg-white/5">
-                    <td className="py-3 px-3">
-                      <div className="font-extrabold text-white truncate max-w-[200px]">
-                        {p.titulo}
-                      </div>
-                      <div className="text-[10px] text-gray-400">
-                        {p.codigo} · {p.asignado_nombre || 'Sin asignar'}
-                      </div>
-                    </td>
-                    <td className="py-3 px-2 text-[11px] text-gray-300">
-                      {formatearFechaCorta(iniStr)}
-                    </td>
-                    <td className="py-3 px-2 text-[11px] font-bold text-white">
-                      {formatearFechaCorta(p.fecha_limite)}
-                    </td>
-                    <td className="py-3 px-2">
-                      <span
-                        className={`px-2 py-0.5 rounded-full border text-[10px] font-bold ${estStyle.badge}`}
+              <div className="divide-y divide-white/10 relative">
+                {filtrados.length === 0 ? (
+                  <div className="py-12 text-center text-xs text-gray-400">
+                    No hay presupuestos para mostrar en el cronograma.
+                  </div>
+                ) : (
+                  filtrados.map((p) => {
+                    const iniStr = p.fecha_inicio || p.fecha_llegada;
+                    const finStr = p.fecha_limite || iniStr;
+                    const estStyle = estiloEstado(p.estado);
+                    const miembro = equipo.find((m) => m.nombre === p.asignado_nombre);
+                    const foto = miembro?.foto_url || p.asignado_foto;
+
+                    let leftPct = 0;
+                    let widthPct = 0;
+                    let visible = false;
+
+                    if (iniStr) {
+                      const s = new Date(iniStr + 'T00:00:00').getTime();
+                      const e = finStr
+                        ? new Date(finStr + 'T23:59:59').getTime()
+                        : s + 86400000 * 5;
+                      const span = Math.max(1, cronoData.endMs - cronoData.startMs);
+
+                      if (e >= cronoData.startMs && s <= cronoData.endMs) {
+                        visible = true;
+                        const sClamp = Math.max(s, cronoData.startMs);
+                        const eClamp = Math.min(e, cronoData.endMs);
+                        leftPct = ((sClamp - cronoData.startMs) / span) * 100;
+                        widthPct = Math.max(2.2, ((eClamp - sClamp) / span) * 100);
+                      }
+                    }
+
+                    return (
+                      <div
+                        key={p.id}
+                        onClick={() => abrirEditar(p)}
+                        className="grid grid-cols-12 hover:bg-white/[0.03] transition-colors cursor-pointer"
                       >
-                        {p.estado}
-                      </span>
-                    </td>
-                    <td className="py-3 px-2">
-                      <div className="relative h-7 bg-[#181818] rounded-lg border border-white/10 overflow-hidden">
-                        {iniStr && (
+                        <div className="col-span-3 px-4 py-3 border-r border-white/10 flex items-center justify-between gap-2 min-w-0">
+                          <div className="min-w-0">
+                            <div className="text-xs font-extrabold text-white truncate">
+                              <span className="text-[#EAB308] mr-1.5">{p.codigo}</span>
+                              {p.titulo}
+                            </div>
+                            <div className="text-[11px] text-gray-400 truncate mt-0.5">
+                              {formatearFechaCorta(iniStr)} → {formatearFechaCorta(p.fecha_limite)}
+                            </div>
+                          </div>
+
+                          {foto ? (
+                            <img
+                              src={foto}
+                              alt={p.asignado_nombre}
+                              title={p.asignado_nombre}
+                              className="w-6 h-6 rounded-full object-cover flex-shrink-0 border border-white/15"
+                            />
+                          ) : (
+                            <span
+                              title={p.asignado_nombre || 'Sin asignar'}
+                              className="w-6 h-6 rounded-full bg-gray-800 text-white font-extrabold text-[9px] flex items-center justify-center flex-shrink-0 border border-white/15"
+                            >
+                              {obtenerIniciales(p.asignado_nombre || '?')}
+                            </span>
+                          )}
+                        </div>
+
+                        <div className="col-span-9 relative flex items-center py-2.5">
                           <div
+                            className="absolute inset-0 grid pointer-events-none"
                             style={{
-                              left: `${leftPct}%`,
-                              width: `${widthPct}%`,
-                              backgroundColor: estStyle.bar,
+                              gridTemplateColumns: `repeat(${cronoData.bloques.length}, minmax(0, 1fr))`,
                             }}
-                            className="absolute top-1.5 bottom-1.5 rounded-md shadow"
-                          />
-                        )}
+                          >
+                            {cronoData.bloques.map((b) => (
+                              <div
+                                key={b.key}
+                                className="border-r border-white/5 last:border-r-0 h-full"
+                              />
+                            ))}
+                          </div>
+
+                          {cronoData.hoyPct >= 0 && cronoData.hoyPct <= 100 && (
+                            <div
+                              style={{ left: `${cronoData.hoyPct}%` }}
+                              className="absolute top-0 bottom-0 w-[1.5px] bg-rose-500/80 z-10 pointer-events-none"
+                            />
+                          )}
+
+                          {visible && (
+                            <div
+                              style={{
+                                left: `${leftPct}%`,
+                                width: `${widthPct}%`,
+                                backgroundColor: estStyle.bar,
+                              }}
+                              className="relative z-10 h-6 rounded-lg px-2.5 flex items-center justify-between text-[10px] font-extrabold text-black shadow-md overflow-hidden"
+                            >
+                              <span className="truncate">{p.titulo}</span>
+                            </div>
+                          )}
+                        </div>
                       </div>
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
+                    );
+                  })
+                )}
+              </div>
+            </div>
+          </div>
         </div>
       )}
 
@@ -941,14 +1313,14 @@ export default function PresupuestosClient({
         montado &&
         createPortal(
           <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-[9999] p-4 backdrop-blur-sm">
-            <div className="bg-[#1A1A1A] border border-gray-800 rounded-2xl w-full max-w-2xl shadow-2xl overflow-hidden flex flex-col max-h-[92vh]">
+            <div className="bg-[#161616] border border-gray-800 rounded-2xl w-full max-w-2xl shadow-2xl overflow-hidden flex flex-col max-h-[92vh]">
               <div className="px-6 pt-5 pb-4 border-b border-gray-800 flex justify-between items-center">
                 <div>
-                  <h2 className="text-lg font-bold text-white">
+                  <h2 className="text-lg font-extrabold text-white">
                     {editando ? 'Editar Presupuesto' : 'Nuevo Presupuesto'}
                   </h2>
                   <p className="text-xs text-gray-400 mt-0.5">
-                    Asignación de responsable, fechas clave, prioridad, estado y archivo PDF
+                    Asignación de responsable, fechas clave, prioridad, estado, alarma y archivo PDF
                   </p>
                 </div>
                 <button
@@ -960,20 +1332,24 @@ export default function PresupuestosClient({
                 </button>
               </div>
 
-              <form onSubmit={guardarPresupuesto} className="px-6 py-5 overflow-y-auto space-y-4">
+              <form
+                ref={refModalForm}
+                onSubmit={guardarPresupuesto}
+                className="px-6 py-5 overflow-y-auto space-y-4"
+              >
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                   <div>
-                    <label className="block text-xs font-semibold text-gray-300 mb-1">Código</label>
+                    <label className="block text-xs font-bold text-gray-200 mb-1.5">Código</label>
                     <input
                       type="text"
                       value={codigo}
                       onChange={(e) => setCodigo(e.target.value)}
-                      className="w-full bg-[#121212] border border-gray-800 rounded-lg px-3 py-2 text-xs text-white font-bold"
+                      className="w-full bg-[#1C1C1C] border border-gray-700 rounded-xl px-3.5 py-2.5 text-xs text-white font-bold"
                     />
                   </div>
                   <div className="md:col-span-2">
-                    <label className="block text-xs font-semibold text-gray-300 mb-1">
-                      Título / Obra a Presupuestar *
+                    <label className="block text-xs font-bold text-gray-200 mb-1.5">
+                      Título / Obra a Presupuestar <span className="text-[#EAB308]">*</span>
                     </label>
                     <input
                       type="text"
@@ -981,80 +1357,148 @@ export default function PresupuestosClient({
                       value={titulo}
                       onChange={(e) => setTitulo(e.target.value)}
                       placeholder="Ej. Shell Enerse"
-                      className="w-full bg-[#121212] border border-gray-800 rounded-lg px-3 py-2 text-xs text-white"
+                      className="w-full bg-[#1C1C1C] border border-gray-700 rounded-xl px-3.5 py-2.5 text-xs text-white"
                     />
                   </div>
                 </div>
 
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                  <div>
-                    <label className="block text-xs font-semibold text-gray-300 mb-1">Cliente</label>
-                    <select
-                      value={clienteId}
-                      onChange={(e) => setClienteId(e.target.value)}
-                      className="w-full bg-[#121212] border border-gray-800 rounded-lg px-3 py-2 text-xs text-white"
+                  <div className={`relative ${dropAbierto === 'cliente' ? 'z-[200]' : 'z-20'}`}>
+                    <label className="block text-xs font-bold text-gray-200 mb-1.5">Cliente</label>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setDropAbierto((prev) => (prev === 'cliente' ? null : 'cliente'))
+                      }
+                      className="w-full bg-[#1C1C1C] border border-gray-700 hover:border-gray-600 rounded-xl px-3.5 py-2.5 text-xs font-bold text-white flex items-center justify-between gap-2 cursor-pointer"
                     >
-                      <option value="">Sin cliente</option>
-                      {clientes.map((c) => (
-                        <option key={c.id} value={c.id}>
-                          {c.nombre}
-                        </option>
-                      ))}
-                    </select>
+                      <span className="truncate">
+                        {clienteSeleccionadoObj ? clienteSeleccionadoObj.nombre : 'Sin cliente'}
+                      </span>
+                      <ChevronDown className="w-4 h-4 text-gray-400 flex-shrink-0" />
+                    </button>
+
+                    {dropAbierto === 'cliente' && (
+                      <div className="absolute left-0 right-0 mt-1.5 bg-[#1C1C1C] border border-gray-700 rounded-2xl shadow-2xl py-2 z-[210] max-h-56 overflow-y-auto">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setClienteId('');
+                            setDropAbierto(null);
+                          }}
+                          className="w-full px-4 py-2 text-left text-xs font-semibold text-gray-300 hover:bg-white/5 cursor-pointer"
+                        >
+                          Sin cliente
+                        </button>
+                        {clientes.map((c) => (
+                          <button
+                            key={c.id}
+                            type="button"
+                            onClick={() => {
+                              setClienteId(String(c.id));
+                              setDropAbierto(null);
+                            }}
+                            className="w-full px-4 py-2 text-left text-xs font-bold text-white hover:bg-white/5 cursor-pointer"
+                          >
+                            {c.nombre}
+                          </button>
+                        ))}
+                      </div>
+                    )}
                   </div>
 
-                  {/* DESPLEGABLE DE TIPOLOGÍA COMO EN PROYECTO */}
-                  <div>
-                    <label className="block text-xs font-semibold text-gray-300 mb-1">
+                  <div className={`relative ${dropAbierto === 'tipologia' ? 'z-[200]' : 'z-20'}`}>
+                    <label className="block text-xs font-bold text-gray-200 mb-1.5">
                       Tipología
                     </label>
-                    <select
-                      value={tipologia}
-                      onChange={(e) => setTipologia(e.target.value)}
-                      className="w-full bg-[#121212] border border-gray-800 rounded-lg px-3 py-2 text-xs text-white"
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setDropAbierto((prev) => (prev === 'tipologia' ? null : 'tipologia'))
+                      }
+                      className="w-full bg-[#1C1C1C] border border-gray-700 hover:border-gray-600 rounded-xl px-3.5 py-2.5 text-xs font-bold text-white flex items-center justify-between gap-2 cursor-pointer"
                     >
-                      {TIPOLOGIAS_OBRA.map((tip) => (
-                        <option key={tip} value={tip}>
-                          {tip}
-                        </option>
-                      ))}
-                    </select>
+                      <span className="truncate">{tipologia}</span>
+                      <ChevronDown className="w-4 h-4 text-gray-400 flex-shrink-0" />
+                    </button>
+
+                    {dropAbierto === 'tipologia' && (
+                      <div className="absolute left-0 right-0 mt-1.5 bg-[#1C1C1C] border border-gray-700 rounded-2xl shadow-2xl py-2 z-[210] max-h-60 overflow-y-auto">
+                        {TIPOLOGIAS_OBRA.map((tip) => (
+                          <button
+                            key={tip}
+                            type="button"
+                            onClick={() => {
+                              setTipologia(tip);
+                              setDropAbierto(null);
+                            }}
+                            className={`w-full px-4 py-2 text-left text-xs font-bold hover:bg-white/5 cursor-pointer ${
+                              tipologia === tip ? 'text-[#EAB308]' : 'text-white'
+                            }`}
+                          >
+                            {tip}
+                          </button>
+                        ))}
+                      </div>
+                    )}
                   </div>
 
-                  <div>
-                    <label className="block text-xs font-semibold text-gray-300 mb-1">
+                  <div className={`relative ${dropAbierto === 'moneda' ? 'z-[200]' : 'z-20'}`}>
+                    <label className="block text-xs font-bold text-gray-200 mb-1.5">
                       Monto Estimado
                     </label>
                     <div className="flex gap-1.5">
-                      <select
-                        value={moneda}
-                        onChange={(e) => setMoneda(e.target.value as 'USD' | 'ARS')}
-                        className="bg-[#121212] border border-gray-800 rounded-lg px-2 py-2 text-xs font-bold text-white"
-                      >
-                        <option value="USD">USD</option>
-                        <option value="ARS">ARS</option>
-                      </select>
+                      <div className="relative">
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setDropAbierto((prev) => (prev === 'moneda' ? null : 'moneda'))
+                          }
+                          className="bg-[#1C1C1C] border border-gray-700 rounded-xl px-3 py-2.5 text-xs font-extrabold text-white inline-flex items-center gap-1.5 cursor-pointer"
+                        >
+                          <span>{moneda}</span>
+                          <ChevronDown className="w-3.5 h-3.5 text-gray-400" />
+                        </button>
+                        {dropAbierto === 'moneda' && (
+                          <div className="absolute left-0 mt-1.5 w-24 bg-[#1C1C1C] border border-gray-700 rounded-2xl shadow-2xl py-1.5 z-[210]">
+                            {(['USD', 'ARS'] as const).map((m) => (
+                              <button
+                                key={m}
+                                type="button"
+                                onClick={() => {
+                                  setMoneda(m);
+                                  setDropAbierto(null);
+                                }}
+                                className="w-full px-4 py-2 text-left text-xs font-extrabold text-white hover:bg-white/5 cursor-pointer"
+                              >
+                                {m}
+                              </button>
+                            ))}
+                          </div>
+                        )}
+                      </div>
                       <input
                         type="text"
                         value={montoTexto}
                         onChange={(e) => setMontoTexto(formatearMilesDecimales(e.target.value))}
                         placeholder="Ej. 45.000,00"
-                        className="w-full bg-[#121212] border border-gray-800 rounded-lg px-3 py-2 text-xs font-bold text-white"
+                        className="w-full bg-[#1C1C1C] border border-gray-700 rounded-xl px-3 py-2.5 text-xs font-bold text-white"
                       />
                     </div>
                   </div>
                 </div>
 
-                {/* PERSONA ASIGNADA + PRIORIDAD + ESTADO */}
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                  <div ref={refPersona} className="relative">
-                    <label className="block text-xs font-semibold text-gray-300 mb-1">
+                  <div className={`relative ${dropAbierto === 'persona' ? 'z-[200]' : 'z-30'}`}>
+                    <label className="block text-xs font-bold text-gray-200 mb-1.5">
                       Persona asignada
                     </label>
                     <button
                       type="button"
-                      onClick={() => setDropPersonaAbierto((v) => !v)}
-                      className="w-full bg-[#121212] border border-gray-800 rounded-lg px-3 py-1.5 text-xs text-white flex items-center justify-between gap-2 cursor-pointer"
+                      onClick={() =>
+                        setDropAbierto((prev) => (prev === 'persona' ? null : 'persona'))
+                      }
+                      className="w-full bg-[#1C1C1C] border border-gray-700 hover:border-gray-600 rounded-xl px-3.5 py-2 text-xs font-bold text-white flex items-center justify-between gap-2 cursor-pointer"
                     >
                       <span className="inline-flex items-center gap-2 truncate">
                         {personaSeleccionadaObj?.foto_url ? (
@@ -1074,20 +1518,20 @@ export default function PresupuestosClient({
                         )}
                         <span className="truncate">{asignadoNombre || 'Seleccionar...'}</span>
                       </span>
-                      <ChevronDown className="w-3.5 h-3.5 text-gray-400 flex-shrink-0" />
+                      <ChevronDown className="w-4 h-4 text-gray-400 flex-shrink-0" />
                     </button>
 
-                    {dropPersonaAbierto && (
-                      <div className="absolute left-0 right-0 mt-1 bg-[#181818] border border-gray-700 rounded-xl shadow-2xl py-1.5 z-50 max-h-52 overflow-y-auto">
+                    {dropAbierto === 'persona' && (
+                      <div className="absolute left-0 right-0 mt-1.5 bg-[#1C1C1C] border border-gray-700 rounded-2xl shadow-2xl py-2 z-[210] max-h-56 overflow-y-auto">
                         {equipo.map((m) => (
                           <button
                             key={m.id}
                             type="button"
                             onClick={() => {
                               setAsignadoNombre(m.nombre);
-                              setDropPersonaAbierto(false);
+                              setDropAbierto(null);
                             }}
-                            className="w-full px-3 py-2 text-left text-xs text-white hover:bg-white/10 flex items-center gap-2.5 cursor-pointer"
+                            className="w-full px-3.5 py-2 text-left text-xs text-white hover:bg-white/5 flex items-center gap-2.5 cursor-pointer"
                           >
                             {m.foto_url ? (
                               <img
@@ -1100,23 +1544,25 @@ export default function PresupuestosClient({
                                 {obtenerIniciales(m.nombre)}
                               </span>
                             )}
-                            <span className="truncate font-semibold">{m.nombre}</span>
+                            <span className="truncate font-bold">{m.nombre}</span>
                           </button>
                         ))}
                       </div>
                     )}
                   </div>
 
-                  <div ref={refPrioridad} className="relative">
-                    <label className="block text-xs font-semibold text-gray-300 mb-1">
+                  <div className={`relative ${dropAbierto === 'prioridad' ? 'z-[200]' : 'z-30'}`}>
+                    <label className="block text-xs font-bold text-gray-200 mb-1.5">
                       Prioridad
                     </label>
                     <button
                       type="button"
-                      onClick={() => setDropPrioridadAbierto((v) => !v)}
-                      className="w-full bg-[#121212] border border-gray-800 rounded-lg px-3 py-2 text-xs text-white flex items-center justify-between gap-2 cursor-pointer"
+                      onClick={() =>
+                        setDropAbierto((prev) => (prev === 'prioridad' ? null : 'prioridad'))
+                      }
+                      className="w-full bg-[#1C1C1C] border border-gray-700 hover:border-gray-600 rounded-xl px-3.5 py-2.5 text-xs font-bold text-white flex items-center justify-between gap-2 cursor-pointer"
                     >
-                      <span className="inline-flex items-center gap-2 font-semibold">
+                      <span className="inline-flex items-center gap-2">
                         <Flag
                           className="w-3.5 h-3.5"
                           style={{
@@ -1126,14 +1572,11 @@ export default function PresupuestosClient({
                         />
                         {prioridad}
                       </span>
-                      <ChevronDown className="w-3.5 h-3.5 text-gray-400" />
+                      <ChevronDown className="w-4 h-4 text-gray-400" />
                     </button>
 
-                    {dropPrioridadAbierto && (
-                      <div className="absolute left-0 right-0 mt-1 bg-[#181818] border border-gray-700 rounded-xl shadow-2xl py-1.5 z-50">
-                        <div className="px-3 py-1 text-[10px] font-bold text-gray-400">
-                          Prioridad
-                        </div>
+                    {dropAbierto === 'prioridad' && (
+                      <div className="absolute left-0 right-0 mt-1.5 bg-[#1C1C1C] border border-gray-700 rounded-2xl shadow-2xl py-2 z-[210]">
                         {PRIORIDADES_PRESUPUESTO.map((pr) => {
                           const st = estiloPrioridad(pr);
                           return (
@@ -1142,15 +1585,15 @@ export default function PresupuestosClient({
                               type="button"
                               onClick={() => {
                                 setPrioridad(pr);
-                                setDropPrioridadAbierto(false);
+                                setDropAbierto(null);
                               }}
-                              className="w-full px-3 py-2 text-left text-xs text-white hover:bg-white/10 flex items-center gap-2.5 cursor-pointer"
+                              className="w-full px-4 py-2.5 text-left text-xs text-white hover:bg-white/5 flex items-center gap-2.5 cursor-pointer"
                             >
                               <Flag
                                 className="w-3.5 h-3.5"
                                 style={{ color: st.fill, fill: st.fill }}
                               />
-                              <span className="font-semibold">{pr}</span>
+                              <span className="font-bold">{pr}</span>
                             </button>
                           );
                         })}
@@ -1158,63 +1601,211 @@ export default function PresupuestosClient({
                     )}
                   </div>
 
-                  <div>
-                    <label className="block text-xs font-semibold text-gray-300 mb-1">Estado</label>
-                    <select
-                      value={estado}
-                      onChange={(e) => setEstado(e.target.value)}
-                      className={`w-full border rounded-lg px-3 py-2 text-xs font-extrabold cursor-pointer ${
+                  <div className={`relative ${dropAbierto === 'estado' ? 'z-[200]' : 'z-30'}`}>
+                    <label className="block text-xs font-bold text-gray-200 mb-1.5">Estado</label>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setDropAbierto((prev) => (prev === 'estado' ? null : 'estado'))
+                      }
+                      className={`w-full border rounded-xl px-3.5 py-2.5 text-xs font-extrabold flex items-center justify-between gap-2 cursor-pointer ${
                         estiloEstado(estado).badge
                       }`}
                     >
-                      {ESTADOS_PRESUPUESTO.map((est) => (
-                        <option key={est} value={est} className="bg-[#181818] text-white">
-                          {est}
-                        </option>
-                      ))}
-                    </select>
+                      <span className="inline-flex items-center gap-2">
+                        <span className={`w-2 h-2 rounded-full ${estiloEstado(estado).dot}`} />
+                        {estado}
+                      </span>
+                      <ChevronDown className="w-4 h-4" />
+                    </button>
+
+                    {dropAbierto === 'estado' && (
+                      <div className="absolute left-0 right-0 mt-1.5 bg-[#1C1C1C] border border-gray-700 rounded-2xl shadow-2xl py-2 z-[210]">
+                        {ESTADOS_PRESUPUESTO.map((est) => {
+                          const st = estiloEstado(est);
+                          return (
+                            <button
+                              key={est}
+                              type="button"
+                              onClick={() => {
+                                setEstado(est);
+                                setDropAbierto(null);
+                              }}
+                              className="w-full px-4 py-2.5 text-left text-xs font-bold text-white hover:bg-white/5 flex items-center gap-2.5 cursor-pointer"
+                            >
+                              <span className={`w-2 h-2 rounded-full ${st.dot}`} />
+                              <span>{est}</span>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    )}
                   </div>
                 </div>
 
-                {/* FECHAS */}
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4 relative z-10">
                   <div>
-                    <label className="block text-xs font-semibold text-gray-300 mb-1">
+                    <label className="block text-xs font-bold text-gray-200 mb-1.5">
                       Fecha de llegada
                     </label>
                     <input
                       type="date"
                       value={fechaLlegada}
                       onChange={(e) => setFechaLlegada(e.target.value)}
-                      className="w-full bg-[#121212] border border-gray-800 rounded-lg px-3 py-2 text-xs text-white [color-scheme:dark]"
+                      className="w-full bg-[#1C1C1C] border border-gray-700 rounded-xl px-3.5 py-2.5 text-xs text-white [color-scheme:dark]"
                     />
                   </div>
                   <div>
-                    <label className="block text-xs font-semibold text-gray-300 mb-1">
+                    <label className="block text-xs font-bold text-gray-200 mb-1.5">
                       Fecha inicio
                     </label>
                     <input
                       type="date"
                       value={fechaInicio}
                       onChange={(e) => setFechaInicio(e.target.value)}
-                      className="w-full bg-[#121212] border border-gray-800 rounded-lg px-3 py-2 text-xs text-white [color-scheme:dark]"
+                      className="w-full bg-[#1C1C1C] border border-gray-700 rounded-xl px-3.5 py-2.5 text-xs text-white [color-scheme:dark]"
                     />
                   </div>
                   <div>
-                    <label className="block text-xs font-semibold text-gray-300 mb-1">
+                    <label className="block text-xs font-bold text-gray-200 mb-1.5">
                       Fecha límite
                     </label>
                     <input
                       type="date"
                       value={fechaLimite}
                       onChange={(e) => setFechaLimite(e.target.value)}
-                      className="w-full bg-[#121212] border border-gray-800 rounded-lg px-3 py-2 text-xs text-white [color-scheme:dark]"
+                      className="w-full bg-[#1C1C1C] border border-gray-700 rounded-xl px-3.5 py-2.5 text-xs text-white [color-scheme:dark]"
                     />
                   </div>
                 </div>
 
-                {/* CARGA DE PDF DEL PRESUPUESTO + ENLACE EXTERNO (ESTILO BITÁCORA) */}
-                <div className="bg-[#141414] border border-gray-800 rounded-xl p-4 space-y-3">
+                {/* BLOQUE DE ALARMA PROGRAMADA CON TONO Y VOLUMEN */}
+                <div className="bg-[#1C1C1C] border border-gray-800 rounded-2xl p-4 space-y-3 relative z-10">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div>
+                      <div className="text-xs font-bold text-white flex items-center gap-2">
+                        <Bell className="w-3.5 h-3.5 text-[#EAB308]" />
+                        <span>Alarma / Recordatorio Sonoro</span>
+                        {alarmaActiva && (
+                          <span className="bg-[#EAB308]/20 border border-[#EAB308]/50 text-[#EAB308] px-2 py-0.5 rounded text-[10px] font-extrabold">
+                            ACTIVA
+                          </span>
+                        )}
+                      </div>
+                      <p className="text-[11px] text-gray-400 mt-0.5">
+                        Configurá fecha, hora, tono y volumen de la alerta sonora
+                      </p>
+                    </div>
+
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => reproducirSonidoAlarmaVisita(alarmaTono, alarmaVolumen)}
+                        className="px-2.5 py-1.5 rounded-lg bg-[#141414] border border-gray-700 hover:border-[#EAB308] text-[11px] font-bold text-gray-200 inline-flex items-center gap-1 cursor-pointer"
+                      >
+                        <Volume2 className="w-3 h-3 text-[#EAB308]" /> Probar sonido
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const nuevoEstado = !alarmaActiva;
+                          setAlarmaActiva(nuevoEstado);
+                          if (
+                            nuevoEstado &&
+                            typeof window !== 'undefined' &&
+                            'Notification' in window &&
+                            Notification.permission === 'default'
+                          ) {
+                            Notification.requestPermission();
+                          }
+                        }}
+                        className={`px-3 py-1.5 rounded-lg text-[11px] font-extrabold cursor-pointer transition-colors ${
+                          alarmaActiva
+                            ? 'bg-[#EAB308] text-black'
+                            : 'bg-gray-800 text-gray-300 hover:text-white'
+                        }`}
+                      >
+                        {alarmaActiva ? 'Activada' : 'Activar alarma'}
+                      </button>
+                    </div>
+                  </div>
+
+                  {alarmaActiva && (
+                    <div className="space-y-3 pt-2 border-t border-gray-800">
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                        <div>
+                          <label className="block text-[11px] font-bold text-gray-300 mb-1">
+                            Fecha de alarma
+                          </label>
+                          <input
+                            type="date"
+                            required={alarmaActiva}
+                            value={alarmaFecha}
+                            onChange={(e) => setAlarmaFecha(e.target.value)}
+                            className="w-full bg-[#141414] border border-gray-700 rounded-xl px-3.5 py-2 text-xs text-white [color-scheme:dark]"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-[11px] font-bold text-gray-300 mb-1">
+                            Hora de alarma
+                          </label>
+                          <input
+                            type="time"
+                            required={alarmaActiva}
+                            value={alarmaHora}
+                            onChange={(e) => setAlarmaHora(e.target.value)}
+                            className="w-full bg-[#141414] border border-gray-700 rounded-xl px-3.5 py-2 text-xs text-white [color-scheme:dark]"
+                          />
+                        </div>
+                      </div>
+
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-3 items-center">
+                        <div>
+                          <label className="block text-[11px] font-bold text-gray-300 mb-1">
+                            Tono de alarma
+                          </label>
+                          <select
+                            value={alarmaTono}
+                            onChange={(e) => {
+                              const nuevoTono = e.target.value;
+                              setAlarmaTono(nuevoTono);
+                              reproducirSonidoAlarmaVisita(nuevoTono, alarmaVolumen);
+                            }}
+                            className="w-full bg-[#141414] border border-gray-700 rounded-xl px-3 py-2 text-xs font-bold text-white"
+                          >
+                            {TONOS_ALARMA.map((t) => (
+                              <option key={t} value={t}>
+                                {t}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+
+                        <div>
+                          <div className="flex justify-between text-[11px] font-bold text-gray-300 mb-1">
+                            <span>Volumen</span>
+                            <span className="text-[#EAB308]">{alarmaVolumen}%</span>
+                          </div>
+                          <input
+                            type="range"
+                            min={10}
+                            max={100}
+                            step={5}
+                            value={alarmaVolumen}
+                            onChange={(e) => setAlarmaVolumen(Number(e.target.value))}
+                            onMouseUp={() =>
+                              reproducirSonidoAlarmaVisita(alarmaTono, alarmaVolumen)
+                            }
+                            className="w-full accent-[#EAB308] cursor-pointer"
+                          />
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                {/* CARGA DE PDF DEL PRESUPUESTO + BOTONES "VER" Y "ELIMINAR" */}
+                <div className="bg-[#1C1C1C] border border-gray-800 rounded-2xl p-4 space-y-3 relative z-10">
                   <div>
                     <div className="text-xs font-bold text-white flex items-center gap-1.5">
                       <FileText className="w-3.5 h-3.5 text-[#EAB308]" />
@@ -1225,7 +1816,7 @@ export default function PresupuestosClient({
                     </p>
                   </div>
 
-                  <label className="border-2 border-dashed border-gray-700 hover:border-[#EAB308] rounded-xl p-5 flex flex-col items-center justify-center text-center cursor-pointer transition-colors bg-[#121212]">
+                  <label className="border-2 border-dashed border-gray-700 hover:border-[#EAB308] rounded-xl p-5 flex flex-col items-center justify-center text-center cursor-pointer transition-colors bg-[#151515]">
                     {subiendoPdf ? (
                       <Loader2 className="w-6 h-6 text-[#EAB308] animate-spin mb-1.5" />
                     ) : (
@@ -1250,53 +1841,87 @@ export default function PresupuestosClient({
                   </label>
 
                   <div className="space-y-1.5">
-                    <label className="text-[11px] font-bold text-gray-300 flex items-center gap-1.5">
-                      <Link2 className="w-3.5 h-3.5 text-[#EAB308]" />
-                      O pegar enlace externo (Google Drive, Dropbox, OneDrive):
-                    </label>
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <label className="text-[11px] font-bold text-gray-300 flex items-center gap-1.5">
+                        <Link2 className="w-3.5 h-3.5 text-[#EAB308]" />
+                        O pegar enlace externo (Google Drive, Dropbox, OneDrive):
+                      </label>
+
+                      {archivoUrl && (
+                        <div className="inline-flex items-center gap-2.5 text-[11px] font-bold">
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setVisorArchivo({
+                                url: archivoUrl,
+                                titulo: archivoNombre || `${codigo} · ${titulo}`,
+                              })
+                            }
+                            className="text-sky-400 hover:text-sky-300 inline-flex items-center gap-1 cursor-pointer"
+                          >
+                            <Eye className="w-3 h-3" /> Ver
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setArchivoUrl('');
+                              setArchivoNombre('');
+                            }}
+                            className="text-rose-400 hover:text-rose-300 inline-flex items-center gap-1 cursor-pointer"
+                          >
+                            <Trash2 className="w-3 h-3" /> Eliminar
+                          </button>
+                        </div>
+                      )}
+                    </div>
+
                     <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
                       <input
                         type="text"
-                        value={archivoUrl}
+                        value={archivoUrl.startsWith('data:') ? '' : archivoUrl}
                         onChange={(e) => setArchivoUrl(e.target.value)}
-                        placeholder="https://drive.google.com/..."
-                        className="md:col-span-2 bg-[#121212] border border-gray-800 rounded-lg px-3 py-2 text-xs text-white"
+                        placeholder={
+                          archivoUrl.startsWith('data:')
+                            ? 'Archivo cargado desde dispositivo ✓'
+                            : 'https://drive.google.com/...'
+                        }
+                        className="md:col-span-2 bg-[#141414] border border-gray-800 rounded-xl px-3 py-2 text-xs text-white"
                       />
                       <input
                         type="text"
                         value={archivoNombre}
                         onChange={(e) => setArchivoNombre(e.target.value)}
                         placeholder="Nombre visible"
-                        className="bg-[#121212] border border-gray-800 rounded-lg px-3 py-2 text-xs text-white"
+                        className="bg-[#141414] border border-gray-800 rounded-xl px-3 py-2 text-xs text-white"
                       />
                     </div>
                   </div>
                 </div>
 
                 <div>
-                  <label className="block text-xs font-semibold text-gray-300 mb-1">
+                  <label className="block text-xs font-bold text-gray-200 mb-1.5">
                     Alcance y Notas
                   </label>
                   <textarea
                     rows={2}
                     value={notas}
                     onChange={(e) => setNotas(e.target.value)}
-                    className="w-full bg-[#121212] border border-gray-800 rounded-lg px-3 py-2 text-xs text-white resize-none"
+                    className="w-full bg-[#1C1C1C] border border-gray-800 rounded-xl px-3.5 py-2.5 text-xs text-white resize-none"
                   />
                 </div>
 
-                <div className="flex justify-end gap-2 pt-2 border-t border-gray-800">
+                <div className="flex justify-end gap-2 pt-3 border-t border-gray-800">
                   <button
                     type="button"
                     onClick={() => setModalAbierto(false)}
-                    className="px-4 py-2 rounded-lg text-xs text-gray-300 hover:text-white cursor-pointer"
+                    className="px-4 py-2 rounded-xl text-xs font-semibold text-gray-300 hover:text-white cursor-pointer"
                   >
                     Cancelar
                   </button>
                   <button
                     type="submit"
                     disabled={guardando}
-                    className="bg-[#EAB308] hover:bg-[#CA9A04] text-black px-5 py-2 rounded-lg text-xs font-bold cursor-pointer disabled:opacity-50"
+                    className="bg-[#EAB308] hover:bg-[#CA9A04] text-black px-5 py-2.5 rounded-xl text-xs font-extrabold cursor-pointer disabled:opacity-50"
                   >
                     {guardando ? 'Guardando...' : 'Guardar Presupuesto'}
                   </button>
@@ -1307,13 +1932,59 @@ export default function PresupuestosClient({
           document.body
         )}
 
-      {/* VISOR PDF INTEGRADO */}
       <VisorArchivoModal
         abierto={Boolean(visorArchivo)}
         url={visorArchivo?.url || ''}
         titulo={visorArchivo?.titulo}
         onClose={() => setVisorArchivo(null)}
       />
+
+      {/* ALARMA SONORA CONTINUA EMERGENTE */}
+      {alarmaSonando &&
+        montado &&
+        createPortal(
+          <div className="fixed top-6 right-6 bg-[#1C1C1C] border-2 border-[#EAB308] shadow-2xl rounded-2xl p-4 w-80 z-[10000] space-y-2.5 animate-pulse">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-extrabold text-[#EAB308]">
+                🔔 ALARMA ACTIVA · PRESUPUESTO
+              </span>
+              <button
+                type="button"
+                onClick={() => setAlarmaSonando(null)}
+                className="text-gray-400 hover:text-white cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            <div className="text-sm font-extrabold text-white">
+              {alarmaSonando.codigo} · {alarmaSonando.titulo}
+            </div>
+            <div className="text-xs text-gray-300">
+              Alarma: {formatearFechaCorta(alarmaSonando.alarma_fecha)} a las{' '}
+              {alarmaSonando.alarma_hora} hs
+            </div>
+            <div className="flex justify-end pt-1">
+              <button
+                type="button"
+                onClick={async () => {
+                  const item = alarmaSonando;
+                  setAlarmaSonando(null);
+                  await supabase
+                    .from('presupuestos')
+                    .update({ alarma_activa: false })
+                    .eq('id', item.id);
+                  setPresupuestos((prev) =>
+                    prev.map((p) => (p.id === item.id ? { ...p, alarma_activa: false } : p))
+                  );
+                }}
+                className="w-full py-2 rounded-xl bg-[#EAB308] hover:bg-[#CA9A04] text-black text-xs font-extrabold cursor-pointer"
+              >
+                Detener alarma
+              </button>
+            </div>
+          </div>,
+          document.body
+        )}
 
       {toast &&
         montado &&

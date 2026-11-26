@@ -49,7 +49,15 @@ function parsearMontoFlexible(numStr: string): number {
   return !isNaN(val) && val > 0 && val < 1000000000 ? val : 0;
 }
 
-async function extraerTextoConPdfJs(buffer: ArrayBuffer): Promise<string> {
+async function extraerTextoConPdfJsYOcr(file: File): Promise<string> {
+  // Si suben una imagen directa (JPG/PNG), ejecutar OCR directo
+  if (file.type.startsWith('image/')) {
+    const Tesseract = (await import('tesseract.js')).default;
+    const { data } = await Tesseract.recognize(file, 'spa');
+    return (data?.text || '').replace(/\s+/g, ' ').trim();
+  }
+
+  const buffer = await file.arrayBuffer();
   const pdfjsLib = await import('pdfjs-dist');
   pdfjsLib.GlobalWorkerOptions.workerSrc = `https://unpkg.com/pdfjs-dist@${pdfjsLib.version}/build/pdf.worker.min.mjs`;
 
@@ -64,7 +72,32 @@ async function extraerTextoConPdfJs(buffer: ArrayBuffer): Promise<string> {
     paginasTexto.push(strings.join(' '));
   }
 
-  return paginasTexto.join(' ').replace(/\s+/g, ' ').trim();
+  const textoEmbebido = paginasTexto.join(' ').replace(/\s+/g, ' ').trim();
+
+  // Si el PDF trae capa de texto real (como facturas electrónicas AFIP), devolverlo directo
+  if (textoEmbebido.length >= 80) {
+    return textoEmbebido;
+  }
+
+  // Respaldo OCR para PDFs escaneados o fotografiados (como Maderera Rosati)
+  const paginasOcr: string[] = [];
+  const Tesseract = (await import('tesseract.js')).default;
+
+  for (let i = 1; i <= Math.min(pdf.numPages, 2); i++) {
+    const page = await pdf.getPage(i);
+    const viewport = page.getViewport({ scale: 2.5 });
+    const canvas = document.createElement('canvas');
+    canvas.width = viewport.width;
+    canvas.height = viewport.height;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) continue;
+
+    await page.render({ canvasContext: ctx, viewport, canvas } as any).promise;
+    const { data } = await Tesseract.recognize(canvas, 'spa');
+    if (data?.text) paginasOcr.push(data.text);
+  }
+
+  return paginasOcr.join(' ').replace(/\s+/g, ' ').trim() || textoEmbebido;
 }
 
 export async function extraerDatosFacturaPdf(file: File): Promise<{
@@ -78,21 +111,20 @@ export async function extraerDatosFacturaPdf(file: File): Promise<{
   textoCompleto: string;
 }> {
   try {
-    const buffer = await file.arrayBuffer();
-    const textoPdfInterno = await extraerTextoConPdfJs(buffer);
-    const nombreArchivo = file.name.replace(/\.pdf$/i, '');
+    const textoPdfInterno = await extraerTextoConPdfJsYOcr(file);
+    const nombreArchivo = file.name.replace(/\.[^.]+$/, '');
 
     // 0. CUIT DEL PROVEEDOR (ignora el CUIT propio de MB Arquitectura SA: 30-71624594-9)
     let cuitDetectado: string | null = null;
     const todosCuits = [
-      ...textoPdfInterno.matchAll(/\b(20|23|24|27|30|33|34)[-\s]?(\d{8})[-\s]?(\d)\b/g),
+      ...textoPdfInterno.matchAll(/\b(20|23|24|27|30|33|34)[-\s.]?(\d{8})[-\s.]?(\d)\b/g),
     ].map((m) => `${m[1]}-${m[2]}-${m[3]}`);
     const cuitEmisor = todosCuits.find((c) => c !== '30-71624594-9');
     if (cuitEmisor) {
       cuitDetectado = cuitEmisor;
     }
 
-    // 1. FECHA DE EMISIÓN (soporta espacios "08 /07 /26" y año de 2 o 4 dígitos; ignora Inicio de Actividades y VTO)
+    // 1. FECHA DE EMISIÓN (soporta "FECHA 17/11/2026", "08 /07 /26", año de 2 o 4 dígitos; ignora Inicio de Actividades y VTO)
     let fechaDetectada: string | null = null;
 
     const matchFechaTexto = textoPdfInterno.match(
@@ -109,7 +141,7 @@ export async function extraerDatosFacturaPdf(file: File): Promise<{
 
     if (!fechaDetectada) {
       const matchFechaEtiqueta = textoPdfInterno.match(
-        /(?:Fecha\s+de\s+Emisi[oó]n|Fecha\s+Comprobante|Fecha)[:\s]*(\d{1,2})\s*[\/\-]\s*(\d{1,2})\s*[\/\-]\s*(20\d{2}|\d{2})\b/i
+        /(?:Fecha\s+de\s+Emisi[oó]n|Fecha\s+Comprobante|Fecha)[^\d]{0,10}(\d{1,2})\s*[\/\-]\s*(\d{1,2})\s*[\/\-]\s*(20\d{2}|\d{2})\b/i
       );
       if (matchFechaEtiqueta) {
         const dia = matchFechaEtiqueta[1].padStart(2, '0');
@@ -125,7 +157,7 @@ export async function extraerDatosFacturaPdf(file: File): Promise<{
     }
 
     if (!fechaDetectada) {
-      const encabezado = textoPdfInterno.slice(0, 900);
+      const encabezado = textoPdfInterno.slice(0, 1000);
       const todasFechas = [
         ...encabezado.matchAll(/\b(\d{1,2})\s*[\/\-]\s*(\d{1,2})\s*[\/\-]\s*(20\d{2}|\d{2})\b/g),
       ];
@@ -165,37 +197,56 @@ export async function extraerDatosFacturaPdf(file: File): Promise<{
     }
 
     if (!fechaDetectada) {
-      const matchNombreFecha = nombreArchivo.match(/^(\d{1,2})[\/\-](\d{1,2})\b/);
+      const matchNombreFecha = nombreArchivo.match(/(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})/);
       if (matchNombreFecha) {
         const dia = matchNombreFecha[1].padStart(2, '0');
         const mes = matchNombreFecha[2].padStart(2, '0');
-        const anioActual = new Date().getFullYear();
+        const anio =
+          matchNombreFecha[3].length === 2
+            ? `20${matchNombreFecha[3]}`
+            : matchNombreFecha[3];
         if (Number(mes) >= 1 && Number(mes) <= 12 && Number(dia) >= 1 && Number(dia) <= 31) {
-          fechaDetectada = `${anioActual}-${mes}-${dia}`;
+          fechaDetectada = `${anio}-${mes}-${dia}`;
         }
       }
     }
 
     // 2. NRO. DE FACTURA / ORDEN
     let nroFactura: string | null = null;
+    const cabeceraPdf = textoPdfInterno.slice(0, 1500);
 
-    const matchAfip = textoPdfInterno.match(
-      /Punto\s+de\s+Venta[:\s]*(\d{4,5})\s+Comp\.?\s*Nro[:\s]*(\d{6,8})/i
+    const matchAfipDirecto = cabeceraPdf.match(
+      /Punto\s+de\s+Venta[:\s]*(\d{4,5})[\s\S]{0,120}?Comp\.?\s*Nro\.?[:\s]*(\d{6,8})/i
     );
-    if (matchAfip) {
-      nroFactura = `${matchAfip[1]}-${matchAfip[2]}`;
+    if (matchAfipDirecto) {
+      nroFactura = `${matchAfipDirecto[1].padStart(5, '0')}-${matchAfipDirecto[2].padStart(8, '0')}`;
+    }
+
+    if (!nroFactura) {
+      const matchParAfipSeparado = cabeceraPdf.match(/\b(\d{5})\s+(\d{8})\b/);
+      if (matchParAfipSeparado) {
+        nroFactura = `${matchParAfipSeparado[1]}-${matchParAfipSeparado[2]}`;
+      }
+    }
+
+    if (!nroFactura) {
+      const matchPv = cabeceraPdf.match(/Punto\s+de\s+Venta[:\s]*(\d{4,5})\b/i);
+      const matchComp = cabeceraPdf.match(/Comp\.?\s*Nro\.?[:\s]*(\d{6,8})\b/i);
+      if (matchPv && matchComp) {
+        nroFactura = `${matchPv[1].padStart(5, '0')}-${matchComp[1].padStart(8, '0')}`;
+      }
     }
 
     if (!nroFactura) {
       const matchComprobante = textoPdfInterno.match(
-        /(?:Factura\s*[ABC]?\s*(?:N[°ºo.]*)?|Comprobante\s*(?:N[°ºo.]*)?|NRO\.?|N[°ºo.]\s*)[:\s]*(\d{4,5}\s*-\s*\d{6,8})/i
+        /(?:Factura\s*[ABC]?\s*(?:N[°ºo.]*)?|Comprobante\s*(?:N[°ºo.]*)?|NRO\.?|N[°ºo.]\s*)[:\s]*(\d{4,5}\s*[-–]\s*\d{6,8})/i
       );
       if (matchComprobante) {
-        nroFactura = matchComprobante[1].replace(/\s+/g, '');
+        nroFactura = matchComprobante[1].replace(/\s+/g, '').replace('–', '-');
       } else {
-        const matchGenericoPdf = textoPdfInterno.match(/\b(\d{4,5}-\d{6,8})\b/);
+        const matchGenericoPdf = textoPdfInterno.match(/\b(\d{4,5})\s*[-–]\s*(\d{6,8})\b/);
         if (matchGenericoPdf) {
-          nroFactura = matchGenericoPdf[1];
+          nroFactura = `${matchGenericoPdf[1].padStart(5, '0')}-${matchGenericoPdf[2].padStart(8, '0')}`;
         }
       }
     }
@@ -205,7 +256,7 @@ export async function extraerDatosFacturaPdf(file: File): Promise<{
       if (matchNombreOc) nroFactura = matchNombreOc[1];
     }
 
-    // 3. IMPORTE SUBTOTAL / NETO GRAVADO (soporta ":" intermedio como "Subtotal : 36,100.46")
+    // 3. IMPORTE SUBTOTAL / NETO GRAVADO
     let montoDetectado = 0;
 
     const regexEtiquetaNeto =
@@ -270,11 +321,27 @@ export async function extraerDatosFacturaPdf(file: File): Promise<{
     const monedaDetectada: 'ARS' | 'USD' | null =
       /\b(?:USD|U\$S|DOLARES|DÓLARES)\b/i.test(textoPdfInterno) ? 'USD' : null;
 
-    const proveedorSugerido =
-      nombreArchivo
-        .replace(/^\d{1,2}[\/\-]\d{1,2}\s*/, '')
-        .replace(/[_-]+/g, ' ')
-        .trim() || null;
+    // 4. PROVEEDOR SUGERIDO DESDE RAZÓN SOCIAL DEL COMPROBANTE (si no se encuentra, usa nombre de archivo)
+    let proveedorSugerido: string | null = null;
+    const matchRazonSocial = textoPdfInterno
+      .slice(0, 800)
+      .match(
+        /(?:de\s+)?([A-ZÁÉÍÓÚÑ][A-ZÁÉÍÓÚÑ0-9\s.&]{3,40}\s+(?:S\.?A\.?|S\.?R\.?L\.?|S\.?A\.?S\.?))/
+      );
+    if (
+      matchRazonSocial &&
+      !matchRazonSocial[1].toUpperCase().includes('MB ARQUITECTURA')
+    ) {
+      proveedorSugerido = matchRazonSocial[1].trim();
+    }
+
+    if (!proveedorSugerido) {
+      proveedorSugerido =
+        nombreArchivo
+          .replace(/^\d{1,2}[\/\-]\d{1,2}\s*/, '')
+          .replace(/[_-]+/g, ' ')
+          .trim() || null;
+    }
 
     const nombreLimpio = nombreArchivo.replace(/[_-]+/g, ' ').trim();
 

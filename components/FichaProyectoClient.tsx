@@ -238,6 +238,23 @@ export default function FichaProyectoClient({
   useEffect(() => {
     setMontado(true);
     cargarSerieCAC();
+
+    // Si se ingresa desde Notificaciones (?tab=comentarios), abrir directamente esa pestaña
+    if (typeof window !== 'undefined') {
+      const params = new URLSearchParams(window.location.search);
+      const tabParam = params.get('tab');
+      if (
+        tabParam === 'resumen' ||
+        tabParam === 'tareas' ||
+        tabParam === 'visitas' ||
+        tabParam === 'documentos' ||
+        tabParam === 'compras' ||
+        tabParam === 'finanzas' ||
+        tabParam === 'comentarios'
+      ) {
+        setPestanaActiva(tabParam);
+      }
+    }
   }, []);
 
   useEffect(() => {
@@ -422,7 +439,8 @@ export default function FichaProyectoClient({
 
   const publicarComentario = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!nuevoComentario.trim()) return;
+    const texto = nuevoComentario.trim();
+    if (!texto) return;
     setEnviandoComentario(true);
 
     let autorNombre = 'Alejandro Fego';
@@ -439,7 +457,7 @@ export default function FichaProyectoClient({
     const item = {
       id: Date.now(),
       autor: autorNombre,
-      texto: nuevoComentario.trim(),
+      texto,
       fecha: new Date().toLocaleString('es-AR', {
         day: '2-digit',
         month: '2-digit',
@@ -456,12 +474,29 @@ export default function FichaProyectoClient({
       .update({ comentarios: listaActualizada })
       .eq('codigo', datosProyectoLocal.codigo);
 
+    // Detectar menciones (@Nombre) y registrarlas en comentarios_proyecto para AVISOS DEL EQUIPO
+    const mencionesDetectadas = (equipo || [])
+      .map((m: any) => String(m.nombre || '').trim())
+      .filter((nom: string) => nom && texto.toLowerCase().includes(`@${nom.toLowerCase()}`));
+
+    await supabase.from('comentarios_proyecto').insert([
+      {
+        proyecto_codigo: datosProyectoLocal.codigo,
+        proyecto_nombre: datosProyectoLocal.nombre,
+        autor: autorNombre,
+        mensaje: texto,
+        menciones: mencionesDetectadas,
+        leido_por: [autorNombre],
+      },
+    ]);
+
     setEnviandoComentario(false);
 
     if (!error) {
       setComentarios(listaActualizada);
       setNuevoComentario('');
-      mostrarToast('Comentario guardado en el proyecto');
+      window.dispatchEvent(new Event('mb_nuevo_comentario'));
+      mostrarToast('Comentario guardado y notificado al equipo');
       router.refresh();
     } else {
       alert('Error al guardar comentario: ' + error.message);

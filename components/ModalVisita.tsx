@@ -4,74 +4,96 @@ import { useState, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { supabase } from '@/lib/supabase';
 import { moverAPapelera } from '@/lib/papelera';
-import { X, Bell, Trash2, Upload, Loader2, Link2 } from 'lucide-react';
+import { X, Trash2, Camera, Upload, Loader2, Bell, Volume2 } from 'lucide-react';
 
-export const CATEGORIAS_VISITA = [
-  'Visita de obra',
-  'Reunión con cliente',
-  'Coordinación de gremios',
-  'Relevamiento técnico',
-  'Entrega de documentación',
-];
+export const TONOS_ALARMA = [
+  'Campana Suave',
+  'Alerta Doble',
+  'Melodía Estudio',
+  'Urgente',
+] as const;
 
-export const ESTADOS_VISITA = ['Programada', 'Realizada', 'Cancelada'];
+export function reproducirSonidoAlarmaVisita(
+  tono: string = 'Campana Suave',
+  volumenPct: number = 80
+) {
+  try {
+    const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
+    const ctx = new AudioCtx();
+    const vol = Math.max(0.02, Math.min(1, Number(volumenPct || 80) / 100));
 
-export const ETIQUETAS_FOTO = ['Antes', 'En Obra', 'Final de Obra'] as const;
+    const secuencias: Record<
+      string,
+      { freq: number; delay: number; dur: number; type: OscillatorType }[]
+    > = {
+      'Campana Suave': [
+        { freq: 880, delay: 0, dur: 0.35, type: 'sine' },
+        { freq: 1174.66, delay: 0.28, dur: 0.45, type: 'sine' },
+      ],
+      'Alerta Doble': [
+        { freq: 987.77, delay: 0, dur: 0.16, type: 'triangle' },
+        { freq: 987.77, delay: 0.22, dur: 0.16, type: 'triangle' },
+        { freq: 1318.5, delay: 0.45, dur: 0.3, type: 'triangle' },
+      ],
+      'Melodía Estudio': [
+        { freq: 523.25, delay: 0, dur: 0.18, type: 'sine' },
+        { freq: 659.25, delay: 0.18, dur: 0.18, type: 'sine' },
+        { freq: 783.99, delay: 0.36, dur: 0.18, type: 'sine' },
+        { freq: 1046.5, delay: 0.54, dur: 0.35, type: 'sine' },
+      ],
+      Urgente: [
+        { freq: 1046.5, delay: 0, dur: 0.12, type: 'sawtooth' },
+        { freq: 880, delay: 0.15, dur: 0.12, type: 'sawtooth' },
+        { freq: 1046.5, delay: 0.3, dur: 0.12, type: 'sawtooth' },
+        { freq: 1318.5, delay: 0.45, dur: 0.25, type: 'sawtooth' },
+      ],
+    };
 
-export interface FotoVisita {
-  id: string;
-  url: string;
-  etiqueta: 'Antes' | 'En Obra' | 'Final de Obra';
-  nombre?: string;
+    const notas = secuencias[tono] || secuencias['Campana Suave'];
+
+    notas.forEach((n) => {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = n.type;
+      osc.frequency.setValueAtTime(n.freq, ctx.currentTime + n.delay);
+      gain.gain.setValueAtTime(vol * 0.45, ctx.currentTime + n.delay);
+      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + n.delay + n.dur);
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start(ctx.currentTime + n.delay);
+      osc.stop(ctx.currentTime + n.delay + n.dur + 0.02);
+    });
+  } catch {
+    // Silencioso si el navegador bloquea audio sin interacción previa
+  }
 }
 
-const INTEGRANTES_DEFAULT = [
-  'Alejandro Fego',
-  'Arq. Ariel Gissi',
-  'Miguel Burruchaga',
-  'Equipo MB',
-];
+export function lanzarNotificacionSistema(titulo: string, cuerpo: string) {
+  if (typeof window === 'undefined' || !('Notification' in window)) return;
 
-async function comprimirImagenWeb(file: File): Promise<Blob> {
-  return new Promise((resolve) => {
-    const img = new Image();
-    const url = URL.createObjectURL(file);
-    img.onload = () => {
-      URL.revokeObjectURL(url);
-      const maxDim = 1400;
-      let { width, height } = img;
-      if (width > maxDim || height > maxDim) {
-        if (width > height) {
-          height = Math.round((height * maxDim) / width);
-          width = maxDim;
-        } else {
-          width = Math.round((width * maxDim) / height);
-          height = maxDim;
-        }
-      }
-      const canvas = document.createElement('canvas');
-      canvas.width = width;
-      canvas.height = height;
-      const ctx = canvas.getContext('2d');
-      if (!ctx) {
-        resolve(file);
-        return;
-      }
-      ctx.drawImage(img, 0, 0, width, height);
-      canvas.toBlob(
-        (blob) => {
-          resolve(blob || file);
-        },
-        'image/jpeg',
-        0.8
-      );
-    };
-    img.onerror = () => {
-      URL.revokeObjectURL(url);
-      resolve(file);
-    };
-    img.src = url;
-  });
+  const mostrar = () => {
+    try {
+      const notif = new Notification(titulo, {
+        body: cuerpo,
+        requireInteraction: true,
+        tag: 'mb-arquitectos-alarma',
+      });
+      notif.onclick = () => {
+        window.focus();
+        notif.close();
+      };
+    } catch {
+      // Silencioso si el SO bloquea notificaciones
+    }
+  };
+
+  if (Notification.permission === 'granted') {
+    mostrar();
+  } else if (Notification.permission !== 'denied') {
+    Notification.requestPermission().then((perm) => {
+      if (perm === 'granted') mostrar();
+    });
+  }
 }
 
 export default function ModalVisita({
@@ -82,6 +104,7 @@ export default function ModalVisita({
   proyectos = [],
   equipo = [],
   proyectoFijoCodigo = '',
+  fechaInicial = '',
 }: {
   abierto: boolean;
   onClose: () => void;
@@ -90,208 +113,155 @@ export default function ModalVisita({
   proyectos?: any[];
   equipo?: any[];
   proyectoFijoCodigo?: string;
+  fechaInicial?: string;
 }) {
   const [montado, setMontado] = useState(false);
   const [cargando, setCargando] = useState(false);
   const [subiendoFotos, setSubiendoFotos] = useState(false);
 
-  const hoyClave = new Date().toISOString().split('T')[0];
+  const hoy = new Date().toISOString().split('T')[0];
 
   const [proyectoCodigo, setProyectoCodigo] = useState(
     proyectoFijoCodigo || proyectos[0]?.codigo || ''
   );
-  const [categoria, setCategoria] = useState('Visita de obra');
-  const [responsable, setResponsable] = useState('Alejandro Fego');
   const [titulo, setTitulo] = useState('');
-  const [fecha, setFecha] = useState(hoyClave);
+  const [tipo, setTipo] = useState('Visita de obra');
+  const [fecha, setFecha] = useState(fechaInicial || hoy);
   const [horario, setHorario] = useState('10:00');
+  const [responsable, setResponsable] = useState('');
   const [estado, setEstado] = useState('Programada');
   const [acta, setActa] = useState('');
-  const [alarmaActiva, setAlarmaActiva] = useState(false);
-  const [alarmaFecha, setAlarmaFecha] = useState(hoyClave);
-  const [alarmaHorario, setAlarmaHorario] = useState('09:00');
+  const [fotos, setFotos] = useState<any[]>([]);
+  const [etiquetaFoto, setEtiquetaFoto] = useState<'Antes' | 'En Obra' | 'Final de Obra'>('En Obra');
 
-  // Bitácora fotográfica
-  const [fotos, setFotos] = useState<FotoVisita[]>([]);
-  const [etiquetaDefecto, setEtiquetaDefecto] = useState<'Antes' | 'En Obra' | 'Final de Obra'>('En Obra');
-  const [enlaceFotoExterna, setEnlaceFotoExterna] = useState('');
-  const [nombreFotoExterna, setNombreFotoExterna] = useState('');
+  const [alarmaActiva, setAlarmaActiva] = useState(false);
+  const [alarmaFecha, setAlarmaFecha] = useState(fechaInicial || hoy);
+  const [alarmaHora, setAlarmaHora] = useState('09:00');
+  const [alarmaTono, setAlarmaTono] = useState<string>('Campana Suave');
+  const [alarmaVolumen, setAlarmaVolumen] = useState<number>(80);
 
   useEffect(() => {
     setMontado(true);
   }, []);
 
-  const listaIntegrantes =
-    equipo.length > 0 ? equipo.map((m) => m.nombre) : INTEGRANTES_DEFAULT;
-
   useEffect(() => {
     if (!abierto) return;
-    const hoy = new Date().toISOString().split('T')[0];
+    const baseFecha = fechaInicial || new Date().toISOString().split('T')[0];
 
     if (visitaEditando) {
-      setProyectoCodigo(
-        visitaEditando.proyecto_codigo || proyectoFijoCodigo || proyectos[0]?.codigo || ''
-      );
-      setCategoria(visitaEditando.categoria || 'Visita de obra');
-      setResponsable(visitaEditando.responsable || listaIntegrantes[0] || 'Alejandro Fego');
+      setProyectoCodigo(visitaEditando.proyecto_codigo || proyectoFijoCodigo || '');
       setTitulo(visitaEditando.titulo || visitaEditando.motivo || '');
-      setFecha(visitaEditando.fecha || hoy);
+      setTipo(visitaEditando.tipo || 'Visita de obra');
+      setFecha(visitaEditando.fecha || baseFecha);
       setHorario(visitaEditando.horario || visitaEditando.hora || '10:00');
+      setResponsable(visitaEditando.responsable || '');
       setEstado(visitaEditando.estado || 'Programada');
       setActa(visitaEditando.acta || '');
-      setAlarmaActiva(Boolean(visitaEditando.alarma_activa));
-      setAlarmaFecha(visitaEditando.alarma_fecha || visitaEditando.fecha || hoy);
-      setAlarmaHorario(visitaEditando.alarma_horario || '09:00');
       setFotos(Array.isArray(visitaEditando.fotos) ? visitaEditando.fotos : []);
-      setEnlaceFotoExterna('');
-      setNombreFotoExterna('');
+      setAlarmaActiva(Boolean(visitaEditando.alarma_activa));
+      setAlarmaFecha(visitaEditando.alarma_fecha || visitaEditando.fecha || baseFecha);
+      setAlarmaHora(visitaEditando.alarma_hora || '09:00');
+      setAlarmaTono(visitaEditando.alarma_tono || 'Campana Suave');
+      setAlarmaVolumen(
+        typeof visitaEditando.alarma_volumen === 'number' ? visitaEditando.alarma_volumen : 80
+      );
     } else {
       setProyectoCodigo(proyectoFijoCodigo || proyectos[0]?.codigo || '');
-      setCategoria('Visita de obra');
-      setResponsable(listaIntegrantes[0] || 'Alejandro Fego');
       setTitulo('');
-      setFecha(hoy);
+      setTipo('Visita de obra');
+      setFecha(baseFecha);
       setHorario('10:00');
+      setResponsable(equipo[0]?.nombre || 'Alejandro Fego');
       setEstado('Programada');
       setActa('');
-      setAlarmaActiva(false);
-      setAlarmaFecha(hoy);
-      setAlarmaHorario('09:00');
       setFotos([]);
-      setEnlaceFotoExterna('');
-      setNombreFotoExterna('');
+      setAlarmaActiva(false);
+      setAlarmaFecha(baseFecha);
+      setAlarmaHora('09:00');
+      setAlarmaTono('Campana Suave');
+      setAlarmaVolumen(80);
     }
-  }, [abierto, visitaEditando, proyectoFijoCodigo]);
+  }, [abierto, visitaEditando, proyectoFijoCodigo, fechaInicial]);
 
   if (!abierto || !montado) return null;
 
-  const manejarSubidaFotos = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const archivos = Array.from(e.target.files || []);
-    if (archivos.length === 0) return;
-
+  const subirFotosObra = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(e.target.files || []);
+    if (files.length === 0) return;
     setSubiendoFotos(true);
-    const nuevasFotos: FotoVisita[] = [];
+    try {
+      for (const file of files) {
+        const ruta = `visitas/${Date.now()}_${file.name.replace(/\s+/g, '_')}`;
+        const { error } = await supabase.storage
+          .from('documentos')
+          .upload(ruta, file, { upsert: true });
 
-    for (const file of archivos) {
-      try {
-        const comprimido = await comprimirImagenWeb(file);
-        const nombreLimpio = file.name.replace(/\.[^.]+$/, '').replace(/\s+/g, '_');
-        const ruta = `${proyectoCodigo || 'general'}/${Date.now()}_${Math.random()
-          .toString(36)
-          .slice(2, 7)}_${nombreLimpio}.jpg`;
-
-        const { error: upErr } = await supabase.storage
-          .from('visitas')
-          .upload(ruta, comprimido, {
-            contentType: 'image/jpeg',
-            upsert: true,
-          });
-
-        if (!upErr) {
-          const { data: pub } = supabase.storage.from('visitas').getPublicUrl(ruta);
-          nuevasFotos.push({
-            id: `${Date.now()}-${Math.random()}`,
-            url: pub.publicUrl,
-            etiqueta: etiquetaDefecto,
-            nombre: file.name,
-          });
+        if (!error) {
+          const { data } = supabase.storage.from('documentos').getPublicUrl(ruta);
+          setFotos((prev) => [
+            ...prev,
+            { id: Date.now() + Math.random(), url: data.publicUrl, etiqueta: etiquetaFoto },
+          ]);
         } else {
           const reader = new FileReader();
-          const dataUrl: string = await new Promise((res) => {
-            reader.onload = () => res(String(reader.result || ''));
-            reader.readAsDataURL(comprimido);
-          });
-          if (dataUrl) {
-            nuevasFotos.push({
-              id: `${Date.now()}-${Math.random()}`,
-              url: dataUrl,
-              etiqueta: etiquetaDefecto,
-              nombre: file.name,
-            });
-          }
+          reader.onload = () => {
+            setFotos((prev) => [
+              ...prev,
+              {
+                id: Date.now() + Math.random(),
+                url: String(reader.result || ''),
+                etiqueta: etiquetaFoto,
+              },
+            ]);
+          };
+          reader.readAsDataURL(file);
         }
-      } catch {
-        // Ignorar archivo corrupto
       }
+    } finally {
+      setSubiendoFotos(false);
     }
-
-    setFotos((prev) => [...prev, ...nuevasFotos]);
-    setSubiendoFotos(false);
-    e.target.value = '';
-  };
-
-  const agregarEnlaceFoto = () => {
-    const urlLimpia = enlaceFotoExterna.trim();
-    if (!urlLimpia) return;
-    setFotos((prev) => [
-      ...prev,
-      {
-        id: `${Date.now()}-${Math.random()}`,
-        url: urlLimpia,
-        etiqueta: etiquetaDefecto,
-        nombre: nombreFotoExterna.trim() || 'Álbum externo',
-      },
-    ]);
-    setEnlaceFotoExterna('');
-    setNombreFotoExterna('');
-  };
-
-  const cambiarEtiquetaFoto = (id: string, nuevaEtiqueta: 'Antes' | 'En Obra' | 'Final de Obra') => {
-    setFotos((prev) =>
-      prev.map((f) => (f.id === id ? { ...f, etiqueta: nuevaEtiqueta } : f))
-    );
-  };
-
-  const quitarFoto = (id: string) => {
-    setFotos((prev) => prev.filter((f) => f.id !== id));
   };
 
   const guardarVisita = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (cargando) return;
     setCargando(true);
 
-    const proy = proyectos.find((p) => p.codigo === proyectoCodigo);
+    try {
+      const proy = proyectos.find((p) => p.codigo === proyectoCodigo);
+      const payload: Record<string, any> = {
+        proyecto_codigo: proy?.codigo || proyectoCodigo || null,
+        proyecto_nombre: proy?.nombre || null,
+        titulo: titulo.trim() || tipo,
+        tipo,
+        fecha,
+        horario,
+        responsable: responsable || null,
+        estado,
+        acta: acta.trim() || null,
+        fotos,
+        alarma_activa: alarmaActiva,
+        alarma_fecha: alarmaActiva ? alarmaFecha || fecha : null,
+        alarma_hora: alarmaActiva ? alarmaHora || '09:00' : null,
+        alarma_tono: alarmaTono,
+        alarma_volumen: alarmaVolumen,
+      };
 
-    const fotosFinales = [...fotos];
-    if (enlaceFotoExterna.trim()) {
-      fotosFinales.push({
-        id: `${Date.now()}-${Math.random()}`,
-        url: enlaceFotoExterna.trim(),
-        etiqueta: etiquetaDefecto,
-        nombre: nombreFotoExterna.trim() || 'Álbum externo',
-      });
-    }
+      const { error } = visitaEditando
+        ? await supabase.from('visitas').update(payload).eq('id', visitaEditando.id)
+        : await supabase.from('visitas').insert([payload]);
 
-    const datos = {
-      proyecto_codigo: proy?.codigo || proyectoCodigo || null,
-      proyecto_nombre: proy?.nombre || visitaEditando?.proyecto_nombre || null,
-      proyecto_estado: proy?.estado || visitaEditando?.proyecto_estado || 'En Diseño',
-      categoria,
-      responsable,
-      titulo: titulo.trim(),
-      fecha,
-      horario,
-      estado,
-      acta: acta.trim() || null,
-      alarma_activa: alarmaActiva,
-      alarma_fecha: alarmaActiva ? alarmaFecha : null,
-      alarma_horario: alarmaActiva ? alarmaHorario : null,
-      fotos: fotosFinales,
-    };
+      if (error) {
+        alert('Error al guardar visita: ' + error.message);
+        return;
+      }
 
-    const { error } = visitaEditando
-      ? await supabase.from('visitas').update(datos).eq('id', visitaEditando.id)
-      : await supabase.from('visitas').insert([datos]);
-
-    setCargando(false);
-
-    if (!error) {
       onClose();
-      onGuardado(
-        visitaEditando ? 'Cambios guardados en la visita' : 'Visita agendada correctamente'
-      );
-    } else {
-      alert('Error al guardar visita: ' + error.message);
+      onGuardado(visitaEditando ? 'Visita actualizada' : 'Visita agendada correctamente');
+    } catch (err: any) {
+      alert('Error inesperado: ' + (err?.message || 'Sin conexión'));
+    } finally {
+      setCargando(false);
     }
   };
 
@@ -302,16 +272,14 @@ export default function ModalVisita({
       await moverAPapelera({
         tabla: 'visitas',
         modulo: 'Visitas y Agenda',
-        titulo: visitaEditando.titulo || visitaEditando.motivo || 'Visita sin título',
-        subtitulo: `${visitaEditando.fecha || ''} ${
-          visitaEditando.horario || visitaEditando.hora || ''
-        }`.trim(),
+        titulo: visitaEditando.titulo || visitaEditando.motivo || 'Visita',
+        subtitulo: visitaEditando.fecha || '',
         registro: visitaEditando,
       });
       onClose();
       onGuardado('Visita enviada a papelera');
-    } catch (error: any) {
-      alert('Error al mover visita a papelera: ' + error.message);
+    } catch (err: any) {
+      alert('Error al eliminar: ' + err.message);
     } finally {
       setCargando(false);
     }
@@ -319,14 +287,14 @@ export default function ModalVisita({
 
   return createPortal(
     <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-[9999] p-4 backdrop-blur-sm">
-      <div className="bg-[#1A1A1A] border border-gray-800 rounded-2xl w-full max-w-2xl shadow-2xl overflow-hidden flex flex-col max-h-[92vh]">
-        <div className="px-6 pt-6 pb-4 flex justify-between items-start border-b border-gray-800/80">
+      <div className="bg-[#161616] border border-gray-800 rounded-2xl w-full max-w-2xl shadow-2xl overflow-hidden flex flex-col max-h-[92vh]">
+        <div className="px-6 pt-5 pb-4 border-b border-gray-800 flex justify-between items-center">
           <div>
-            <h2 className="text-lg font-bold text-white">
-              {visitaEditando ? 'Editar Visita / Reunión' : 'Agendar Nueva Visita / Reunión'}
+            <h2 className="text-lg font-extrabold text-white">
+              {visitaEditando ? 'Editar Visita / Evento' : 'Agendar Visita o Reunión'}
             </h2>
             <p className="text-xs text-gray-400 mt-0.5">
-              Inspección de obra, reunión con cliente, acta y registro fotográfico
+              Coordinación de obra, bitácora fotográfica, acta y alarma recordatoria
             </p>
           </div>
           <button
@@ -339,352 +307,333 @@ export default function ModalVisita({
         </div>
 
         <form onSubmit={guardarVisita} className="px-6 py-5 overflow-y-auto space-y-4">
-          <div>
-            <label className="block text-xs font-semibold text-gray-300 mb-1.5">
-              Corresponde al Proyecto / Obra
-            </label>
-            <select
-              value={proyectoCodigo}
-              onChange={(e) => setProyectoCodigo(e.target.value)}
-              disabled={Boolean(proyectoFijoCodigo)}
-              className="w-full bg-[#121212] border border-gray-700/80 rounded-lg px-3 py-2.5 text-sm text-white disabled:opacity-90"
-            >
-              {!proyectoFijoCodigo && (
-                <option value="">General (Sin proyecto específico)</option>
-              )}
-              {proyectos.map((p) => (
-                <option key={p.codigo} value={p.codigo}>
-                  {p.codigo} · {p.nombre}
-                </option>
-              ))}
-            </select>
-          </div>
-
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div>
-              <label className="block text-xs font-semibold text-gray-300 mb-1.5">Categoría</label>
+              <label className="block text-xs font-bold text-gray-200 mb-1.5">Proyecto / Obra</label>
               <select
-                value={categoria}
-                onChange={(e) => setCategoria(e.target.value)}
-                className="w-full bg-[#121212] border border-gray-700/80 rounded-lg px-3 py-2.5 text-sm text-white"
+                value={proyectoCodigo}
+                disabled={Boolean(proyectoFijoCodigo)}
+                onChange={(e) => setProyectoCodigo(e.target.value)}
+                className="w-full bg-[#1C1C1C] border border-gray-700 rounded-xl px-3.5 py-2.5 text-xs text-white"
               >
-                {CATEGORIAS_VISITA.map((cat) => (
-                  <option key={cat} value={cat}>
-                    {cat}
+                <option value="">General del Estudio</option>
+                {proyectos.map((p) => (
+                  <option key={p.codigo} value={p.codigo}>
+                    {p.codigo} · {p.nombre}
                   </option>
                 ))}
               </select>
             </div>
+
             <div>
-              <label className="block text-xs font-semibold text-gray-300 mb-1.5">
-                Responsable / Participante
-              </label>
+              <label className="block text-xs font-bold text-gray-200 mb-1.5">Tipo de Evento</label>
               <select
-                value={responsable}
-                onChange={(e) => setResponsable(e.target.value)}
-                className="w-full bg-[#121212] border border-gray-700/80 rounded-lg px-3 py-2.5 text-sm text-white"
+                value={tipo}
+                onChange={(e) => setTipo(e.target.value)}
+                className="w-full bg-[#1C1C1C] border border-gray-700 rounded-xl px-3.5 py-2.5 text-xs text-white"
               >
-                {responsable && !listaIntegrantes.includes(responsable) && (
-                  <option value={responsable}>{responsable}</option>
-                )}
-                {listaIntegrantes.map((i) => (
-                  <option key={i} value={i}>
-                    {i}
-                  </option>
-                ))}
+                <option value="Visita de obra">Visita de obra</option>
+                <option value="Reunión con cliente">Reunión con cliente</option>
+                <option value="Coordinación gremios">Coordinación gremios</option>
+                <option value="Entrega de obra">Entrega de obra</option>
               </select>
             </div>
           </div>
 
           <div>
-            <label className="block text-xs font-semibold text-gray-300 mb-1.5">
-              Motivo / Título de Visita *
+            <label className="block text-xs font-bold text-gray-200 mb-1.5">
+              Título / Motivo *
             </label>
             <input
               type="text"
               required
               value={titulo}
               onChange={(e) => setTitulo(e.target.value)}
-              placeholder="Ej. Visita de obra - Replanteo"
-              className="w-full bg-[#121212] border border-gray-700/80 rounded-lg px-3 py-2.5 text-sm text-white placeholder-gray-500"
+              placeholder="Ej. Replanteo de instalaciones y control de avance"
+              className="w-full bg-[#1C1C1C] border border-gray-700 rounded-xl px-3.5 py-2.5 text-xs text-white"
             />
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
             <div>
-              <label className="block text-xs font-semibold text-gray-300 mb-1.5">Fecha *</label>
+              <label className="block text-xs font-bold text-gray-200 mb-1.5">Fecha *</label>
               <input
                 type="date"
                 required
                 value={fecha}
-                onChange={(e) => setFecha(e.target.value)}
-                className="w-full bg-[#121212] border border-gray-700/80 rounded-lg px-3 py-2.5 text-sm text-white [color-scheme:dark]"
+                onChange={(e) => {
+                  setFecha(e.target.value);
+                  if (!alarmaFecha) setAlarmaFecha(e.target.value);
+                }}
+                className="w-full bg-[#1C1C1C] border border-gray-700 rounded-xl px-3 py-2 text-xs text-white [color-scheme:dark]"
               />
             </div>
+
             <div>
-              <label className="block text-xs font-semibold text-gray-300 mb-1.5">Horario</label>
+              <label className="block text-xs font-bold text-gray-200 mb-1.5">Horario</label>
               <input
                 type="time"
                 value={horario}
                 onChange={(e) => setHorario(e.target.value)}
-                className="w-full bg-[#121212] border border-gray-700/80 rounded-lg px-3 py-2.5 text-sm text-white [color-scheme:dark]"
+                className="w-full bg-[#1C1C1C] border border-gray-700 rounded-xl px-3 py-2 text-xs text-white [color-scheme:dark]"
               />
             </div>
+
             <div>
-              <label className="block text-xs font-semibold text-gray-300 mb-1.5">Estado</label>
+              <label className="block text-xs font-bold text-gray-200 mb-1.5">Responsable</label>
               <select
-                value={estado}
-                onChange={(e) => setEstado(e.target.value)}
-                className="w-full bg-[#121212] border border-gray-700/80 rounded-lg px-3 py-2.5 text-sm text-white"
+                value={responsable}
+                onChange={(e) => setResponsable(e.target.value)}
+                className="w-full bg-[#1C1C1C] border border-gray-700 rounded-xl px-3 py-2 text-xs text-white"
               >
-                {ESTADOS_VISITA.map((est) => (
-                  <option key={est} value={est}>
-                    {est}
+                <option value="">Sin asignar</option>
+                {equipo.map((m) => (
+                  <option key={m.id} value={m.nombre}>
+                    {m.nombre}
                   </option>
                 ))}
               </select>
             </div>
+
+            <div>
+              <label className="block text-xs font-bold text-gray-200 mb-1.5">Estado</label>
+              <select
+                value={estado}
+                onChange={(e) => setEstado(e.target.value)}
+                className="w-full bg-[#1C1C1C] border border-gray-700 rounded-xl px-3 py-2 text-xs text-white"
+              >
+                <option value="Programada">Programada</option>
+                <option value="Realizada">Realizada</option>
+                <option value="Reprogramada">Reprogramada</option>
+              </select>
+            </div>
           </div>
 
-          {/* REGISTRO FOTOGRÁFICO DE OBRA (ESTILO RECUADRO PUNTEADO IGUAL A COMPRAS) */}
-          <div className="bg-[#141414] border border-gray-800 rounded-xl p-4 space-y-3">
-            <div className="flex flex-wrap justify-between items-start gap-2">
+          {/* ALARMA PROGRAMABLE CON TONO Y VOLUMEN */}
+          <div className="bg-[#1C1C1C] border border-gray-800 rounded-2xl p-4 space-y-3">
+            <div className="flex flex-wrap items-center justify-between gap-2">
               <div>
-                <div className="text-sm font-bold text-white flex items-center gap-1.5">
-                  📷 Bitácora Fotográfica de Obra ({fotos.length})
+                <div className="text-xs font-bold text-white flex items-center gap-2">
+                  <Bell className="w-3.5 h-3.5 text-[#EAB308]" />
+                  <span>Alarma / Recordatorio Sonoro</span>
+                  {alarmaActiva && (
+                    <span className="bg-[#EAB308]/20 border border-[#EAB308]/50 text-[#EAB308] px-2 py-0.5 rounded text-[10px] font-extrabold">
+                      ACTIVA
+                    </span>
+                  )}
                 </div>
-                <p className="text-xs text-gray-400 mt-1">
-                  Subí fotos desde tu dispositivo o pegá abajo un enlace externo (Google Drive, Dropbox, Nube).
+                <p className="text-[11px] text-gray-400 mt-0.5">
+                  Configurá fecha, hora, tono y volumen de la alerta sonora
                 </p>
               </div>
 
               <div className="flex items-center gap-2">
-                <span className="text-[11px] text-gray-400">Etiqueta:</span>
-                <select
-                  value={etiquetaDefecto}
-                  onChange={(e) => setEtiquetaDefecto(e.target.value as any)}
-                  className="bg-[#121212] border border-gray-700 rounded-lg px-2.5 py-1.5 text-xs font-bold text-white cursor-pointer"
+                <button
+                  type="button"
+                  onClick={() => reproducirSonidoAlarmaVisita(alarmaTono, alarmaVolumen)}
+                  className="px-2.5 py-1.5 rounded-lg bg-[#141414] border border-gray-700 hover:border-[#EAB308] text-[11px] font-bold text-gray-200 inline-flex items-center gap-1 cursor-pointer"
                 >
-                  {ETIQUETAS_FOTO.map((et) => (
-                    <option key={et} value={et}>
-                      {et}
-                    </option>
-                  ))}
+                  <Volume2 className="w-3 h-3 text-[#EAB308]" /> Probar sonido
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const nuevoEstado = !alarmaActiva;
+                    setAlarmaActiva(nuevoEstado);
+                    if (
+                      nuevoEstado &&
+                      typeof window !== 'undefined' &&
+                      'Notification' in window &&
+                      Notification.permission === 'default'
+                    ) {
+                      Notification.requestPermission();
+                    }
+                  }}
+                  className={`px-3 py-1.5 rounded-lg text-[11px] font-extrabold cursor-pointer transition-colors ${
+                    alarmaActiva
+                      ? 'bg-[#EAB308] text-black'
+                      : 'bg-gray-800 text-gray-300 hover:text-white'
+                  }`}
+                >
+                  {alarmaActiva ? 'Activada' : 'Activar alarma'}
+                </button>
+              </div>
+            </div>
+
+            {alarmaActiva && (
+              <div className="space-y-3 pt-2 border-t border-gray-800">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-[11px] font-bold text-gray-300 mb-1">
+                      Fecha de alarma
+                    </label>
+                    <input
+                      type="date"
+                      required={alarmaActiva}
+                      value={alarmaFecha}
+                      onChange={(e) => setAlarmaFecha(e.target.value)}
+                      className="w-full bg-[#141414] border border-gray-700 rounded-xl px-3.5 py-2 text-xs text-white [color-scheme:dark]"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[11px] font-bold text-gray-300 mb-1">
+                      Hora de alarma
+                    </label>
+                    <input
+                      type="time"
+                      required={alarmaActiva}
+                      value={alarmaHora}
+                      onChange={(e) => setAlarmaHora(e.target.value)}
+                      className="w-full bg-[#141414] border border-gray-700 rounded-xl px-3.5 py-2 text-xs text-white [color-scheme:dark]"
+                    />
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3 items-center">
+                  <div>
+                    <label className="block text-[11px] font-bold text-gray-300 mb-1">
+                      Tono de alarma
+                    </label>
+                    <select
+                      value={alarmaTono}
+                      onChange={(e) => {
+                        const nuevoTono = e.target.value;
+                        setAlarmaTono(nuevoTono);
+                        reproducirSonidoAlarmaVisita(nuevoTono, alarmaVolumen);
+                      }}
+                      className="w-full bg-[#141414] border border-gray-700 rounded-xl px-3 py-2 text-xs font-bold text-white"
+                    >
+                      {TONOS_ALARMA.map((t) => (
+                        <option key={t} value={t}>
+                          {t}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div>
+                    <div className="flex justify-between text-[11px] font-bold text-gray-300 mb-1">
+                      <span>Volumen</span>
+                      <span className="text-[#EAB308]">{alarmaVolumen}%</span>
+                    </div>
+                    <input
+                      type="range"
+                      min={10}
+                      max={100}
+                      step={5}
+                      value={alarmaVolumen}
+                      onChange={(e) => setAlarmaVolumen(Number(e.target.value))}
+                      onMouseUp={() => reproducirSonidoAlarmaVisita(alarmaTono, alarmaVolumen)}
+                      className="w-full accent-[#EAB308] cursor-pointer"
+                    />
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* BITÁCORA FOTOGRÁFICA */}
+          <div className="bg-[#1C1C1C] border border-gray-800 rounded-2xl p-4 space-y-3">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="text-xs font-bold text-white flex items-center gap-1.5">
+                <Camera className="w-3.5 h-3.5 text-[#EAB308]" />
+                Bitácora Fotográfica de Obra ({fotos.length})
+              </div>
+              <div className="flex items-center gap-2 text-xs">
+                <span className="text-gray-400">Etiqueta:</span>
+                <select
+                  value={etiquetaFoto}
+                  onChange={(e) => setEtiquetaFoto(e.target.value as any)}
+                  className="bg-[#141414] border border-gray-700 rounded-lg px-2.5 py-1 text-xs font-bold text-white"
+                >
+                  <option value="Antes">Antes</option>
+                  <option value="En Obra">En Obra</option>
+                  <option value="Final de Obra">Final de Obra</option>
                 </select>
               </div>
             </div>
 
-            <label className="border border-dashed border-gray-700 hover:border-[#EAB308] bg-[#121212] rounded-xl p-5 flex flex-col items-center justify-center text-center cursor-pointer transition-colors">
+            <label className="border-2 border-dashed border-gray-700 hover:border-[#EAB308] rounded-xl p-4 flex flex-col items-center justify-center text-center cursor-pointer bg-[#151515]">
               {subiendoFotos ? (
-                <div className="flex items-center gap-2 text-xs text-[#EAB308] font-bold">
-                  <Loader2 className="w-5 h-5 animate-spin" />
-                  <span>Optimizando y subiendo fotos a Supabase...</span>
-                </div>
+                <Loader2 className="w-5 h-5 text-[#EAB308] animate-spin mb-1" />
               ) : (
-                <>
-                  <Upload className="w-5 h-5 text-[#EAB308] mb-2" />
-                  <div className="text-sm font-bold text-[#EAB308]">
-                    {fotos.length > 0
-                      ? `${fotos.length} ${fotos.length === 1 ? 'foto adjunta' : 'fotos adjuntas'} · Hacé clic para sumar más`
-                      : 'Hacé clic aquí para adjuntar fotos de obra (JPG, PNG, WEBP)'}
-                  </div>
-                  <div className="text-xs text-gray-400 mt-1 max-w-md">
-                    Las fotos se optimizan solas. Para álbumes pesados, pegá el enlace de Google Drive abajo.
-                  </div>
-                </>
+                <Upload className="w-5 h-5 text-[#EAB308] mb-1" />
               )}
+              <span className="text-xs font-extrabold text-[#EAB308]">
+                {subiendoFotos
+                  ? 'Subiendo fotografías...'
+                  : 'Hacé clic aquí para adjuntar fotos de obra (JPG, PNG, WEBP)'}
+              </span>
               <input
                 type="file"
                 accept="image/*"
                 multiple
-                disabled={subiendoFotos}
-                onChange={manejarSubidaFotos}
+                onChange={subirFotosObra}
                 className="hidden"
               />
             </label>
 
             {fotos.length > 0 && (
-              <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 pt-1">
-                {fotos.map((f) => (
+              <div className="grid grid-cols-4 gap-2 pt-1">
+                {fotos.map((f, idx) => (
                   <div
-                    key={f.id}
-                    className="bg-[#121212] border border-gray-800 rounded-xl overflow-hidden flex flex-col"
+                    key={f.id || idx}
+                    className="relative rounded-lg overflow-hidden h-16 border border-gray-700"
                   >
-                    <div className="relative h-28 bg-black">
-                      <img
-                        src={f.url}
-                        alt={f.etiqueta}
-                        className="w-full h-full object-cover"
-                      />
-                      <button
-                        type="button"
-                        onClick={() => quitarFoto(f.id)}
-                        className="absolute top-1.5 right-1.5 p-1 rounded-lg bg-black/80 hover:bg-rose-600 text-white cursor-pointer"
-                        title="Eliminar foto"
-                      >
-                        <X className="w-3.5 h-3.5" />
-                      </button>
-                    </div>
-                    <div className="p-2">
-                      <select
-                        value={f.etiqueta}
-                        onChange={(e) => cambiarEtiquetaFoto(f.id, e.target.value as any)}
-                        className={`w-full rounded-lg px-2 py-1 text-[11px] font-bold border cursor-pointer ${
-                          f.etiqueta === 'Antes'
-                            ? 'bg-gray-800 border-gray-700 text-gray-200'
-                            : f.etiqueta === 'Final de Obra'
-                            ? 'bg-emerald-950/80 border-emerald-700/60 text-emerald-400'
-                            : 'bg-amber-950/80 border-amber-700/60 text-[#EAB308]'
-                        }`}
-                      >
-                        {ETIQUETAS_FOTO.map((et) => (
-                          <option key={et} value={et}>
-                            {et}
-                          </option>
-                        ))}
-                      </select>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-
-            <div className="space-y-2 pt-1">
-              <div className="text-xs text-gray-300 font-medium flex items-center gap-1.5">
-                <Link2 className="w-3.5 h-3.5 text-[#EAB308]" />
-                O pegar enlace externo (Google Drive, Dropbox, OneDrive):
-              </div>
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
-                <input
-                  type="text"
-                  value={enlaceFotoExterna}
-                  onChange={(e) => setEnlaceFotoExterna(e.target.value)}
-                  placeholder="https://drive.google.com/..."
-                  className="md:col-span-2 bg-[#121212] border border-gray-800 rounded-lg px-3 py-2 text-xs text-white placeholder-gray-500"
-                />
-                <div className="flex gap-1.5">
-                  <input
-                    type="text"
-                    value={nombreFotoExterna}
-                    onChange={(e) => setNombreFotoExterna(e.target.value)}
-                    placeholder="Nombre visible"
-                    className="w-full bg-[#121212] border border-gray-800 rounded-lg px-3 py-2 text-xs text-white placeholder-gray-500"
-                  />
-                  {enlaceFotoExterna.trim() && (
+                    <img src={f.url} alt="" className="w-full h-full object-cover" />
                     <button
                       type="button"
-                      onClick={agregarEnlaceFoto}
-                      className="px-3 py-2 rounded-lg bg-[#EAB308] text-black text-xs font-extrabold cursor-pointer flex-shrink-0"
+                      onClick={() => setFotos((prev) => prev.filter((_, i) => i !== idx))}
+                      className="absolute top-1 right-1 bg-black/80 text-rose-400 rounded-full p-0.5 cursor-pointer"
                     >
-                      +
+                      <X className="w-3 h-3" />
                     </button>
-                  )}
-                </div>
-              </div>
-            </div>
-          </div>
-
-          {/* Alarma / Recordatorio */}
-          <div className="bg-[#151515] border border-gray-800 rounded-xl p-4 space-y-3">
-            <label className="flex items-center justify-between cursor-pointer">
-              <div className="flex items-center gap-2.5">
-                <Bell
-                  className={`w-4 h-4 ${alarmaActiva ? 'text-[#EAB308]' : 'text-gray-400'}`}
-                />
-                <div>
-                  <div className="text-xs font-bold text-white">Alarma / Recordatorio</div>
-                  <div className="text-[11px] text-gray-400">
-                    Seleccioná fecha y horario para recibir aviso
                   </div>
-                </div>
-              </div>
-              <input
-                type="checkbox"
-                checked={alarmaActiva}
-                onChange={(e) => setAlarmaActiva(e.target.checked)}
-                className="w-4 h-4 accent-[#EAB308] cursor-pointer"
-              />
-            </label>
-
-            {alarmaActiva && (
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-2 border-t border-gray-800/80">
-                <div>
-                  <label className="block text-xs font-semibold text-gray-300 mb-1.5">
-                    Fecha de la alarma
-                  </label>
-                  <input
-                    type="date"
-                    required
-                    value={alarmaFecha}
-                    onChange={(e) => setAlarmaFecha(e.target.value)}
-                    className="w-full bg-[#121212] border border-gray-700/80 rounded-lg px-3 py-2 text-sm text-white [color-scheme:dark]"
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs font-semibold text-gray-300 mb-1.5">
-                    Horario de la alarma
-                  </label>
-                  <input
-                    type="time"
-                    required
-                    value={alarmaHorario}
-                    onChange={(e) => setAlarmaHorario(e.target.value)}
-                    className="w-full bg-[#121212] border border-gray-700/80 rounded-lg px-3 py-2 text-sm text-white [color-scheme:dark]"
-                  />
-                </div>
+                ))}
               </div>
             )}
           </div>
 
           <div>
-            <label className="block text-xs font-semibold text-gray-300 mb-1.5">
-              {visitaEditando ? 'Acta de Visita / Acuerdos de Obra' : 'Notas / Temario previo'}
+            <label className="block text-xs font-bold text-gray-200 mb-1.5">
+              Acta / Notas de Visita
             </label>
             <textarea
               rows={2}
               value={acta}
               onChange={(e) => setActa(e.target.value)}
-              placeholder={
-                visitaEditando
-                  ? 'Minuta técnica o acuerdos convenidos...'
-                  : 'Puntos a revisar en la visita...'
-              }
-              className="w-full bg-[#121212] border border-gray-700/80 rounded-lg px-3 py-2.5 text-sm text-white placeholder-gray-500 resize-none"
+              placeholder="Decisiones tomadas en obra, pendientes de gremios..."
+              className="w-full bg-[#1C1C1C] border border-gray-800 rounded-xl px-3.5 py-2.5 text-xs text-white resize-none"
             />
           </div>
 
-          <div className="flex justify-between items-center pt-2 border-t border-gray-800/80">
+          <div className="flex justify-between items-center pt-3 border-t border-gray-800">
             <div>
               {visitaEditando && (
                 <button
                   type="button"
                   onClick={eliminarVisita}
                   disabled={cargando}
-                  className="border border-transparent hover:border-red-500/40 hover:bg-red-500/15 text-red-500 hover:text-red-400 px-4 py-2.5 rounded-lg font-medium text-sm flex items-center gap-2 cursor-pointer"
+                  className="text-rose-400 hover:text-rose-300 text-xs font-semibold inline-flex items-center gap-1.5 cursor-pointer"
                 >
-                  <Trash2 className="w-4 h-4" /> Enviar a papelera
+                  <Trash2 className="w-3.5 h-3.5" /> Enviar a papelera
                 </button>
               )}
             </div>
-
-            <div className="flex items-center gap-3">
+            <div className="flex items-center gap-2">
               <button
                 type="button"
                 onClick={onClose}
-                className="text-gray-300 hover:text-white px-4 py-2 rounded-lg text-sm font-medium cursor-pointer"
+                className="px-4 py-2 rounded-xl text-xs font-semibold text-gray-300 hover:text-white cursor-pointer"
               >
                 Cancelar
               </button>
               <button
                 type="submit"
-                disabled={cargando || subiendoFotos}
-                className="bg-[#EAB308] hover:bg-[#CA9A04] text-black px-5 py-2.5 rounded-lg font-bold text-sm cursor-pointer disabled:opacity-50"
+                disabled={cargando}
+                className="bg-[#EAB308] hover:bg-[#CA9A04] text-black px-5 py-2.5 rounded-xl text-xs font-extrabold cursor-pointer disabled:opacity-50"
               >
-                {cargando
-                  ? 'Guardando...'
-                  : visitaEditando
-                  ? 'Guardar Cambios'
-                  : 'Agendar Visita'}
+                {cargando ? 'Guardando...' : 'Guardar Visita'}
               </button>
             </div>
           </div>

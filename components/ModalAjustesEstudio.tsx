@@ -1,6 +1,8 @@
 "use client";
 
 import { useState, useEffect } from 'react';
+import { createPortal } from 'react-dom';
+import { useRouter } from 'next/navigation';
 import { supabase } from '@/lib/supabase';
 import { usePreferencias, Idioma, Paleta } from '@/components/PreferenciasProvider';
 import {
@@ -196,6 +198,7 @@ export default function ModalAjustesEstudio({
   abierto: boolean;
   onClose: () => void;
 }) {
+  const router = useRouter();
   const {
     idioma,
     modoPantalla,
@@ -208,6 +211,7 @@ export default function ModalAjustesEstudio({
   } = usePreferencias();
 
   const t = TEXTOS[idioma];
+  const [montado, setMontado] = useState(false);
 
   const [nombreEstudio, setNombreEstudio] = useState('MB Arquitectura SA');
   const [titular, setTitular] = useState('Alejandro Fego');
@@ -221,6 +225,10 @@ export default function ModalAjustesEstudio({
   const [nuevaTipologia, setNuevaTipologia] = useState('');
   const [descargando, setDescargando] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
+
+  useEffect(() => {
+    setMontado(true);
+  }, []);
 
   useEffect(() => {
     if (!abierto) return;
@@ -242,7 +250,7 @@ export default function ModalAjustesEstudio({
     }
   }, [abierto]);
 
-  if (!abierto) return null;
+  if (!abierto || !montado) return null;
 
   const mostrarToast = (msg: string) => {
     setToast(msg);
@@ -353,10 +361,13 @@ export default function ModalAjustesEstudio({
     reader.readAsText(file);
   };
 
-  const guardarAjustes = () => {
+  const guardarAjustes = async () => {
+    const titularLimpio = titular.trim() || 'Alejandro Fego';
+    const estudioLimpio = nombreEstudio.trim() || 'MB Arquitectura SA';
+
     const payload = {
-      nombreEstudio,
-      titular,
+      nombreEstudio: estudioLimpio,
+      titular: titularLimpio,
       matricula,
       idioma,
       pais,
@@ -368,20 +379,36 @@ export default function ModalAjustesEstudio({
       etapas,
       tipologias,
     };
+
     try {
       localStorage.setItem('mb_ajustes_estudio', JSON.stringify(payload));
-      localStorage.setItem('mb_estudio_nombre', nombreEstudio);
+      localStorage.setItem('mb_estudio_nombre', estudioLimpio);
+
+      // Actualizar sesión activa del usuario si es el titular
+      const sesionRaw = localStorage.getItem('mb_sesion_usuario');
+      if (sesionRaw) {
+        const sesion = JSON.parse(sesionRaw);
+        const actualizado = { ...sesion, nombre: titularLimpio };
+        localStorage.setItem('mb_sesion_usuario', JSON.stringify(actualizado));
+        if (sesion.id) {
+          await supabase.from('equipo').update({ nombre: titularLimpio }).eq('id', sesion.id);
+        }
+      }
+
+      window.dispatchEvent(new Event('mb_ajustes_actualizados'));
     } catch {
       // Silencioso
     }
+
     mostrarToast('Ajustes guardados correctamente');
-    setTimeout(() => onClose(), 600);
+    router.refresh();
+    setTimeout(() => onClose(), 550);
   };
 
-  return (
+  return createPortal(
     <div
       onClick={onClose}
-      className="fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4 backdrop-blur-sm"
+      className="fixed inset-0 bg-black/80 flex items-center justify-center z-[9999] p-4 backdrop-blur-sm"
     >
       <div
         onClick={(e) => e.stopPropagation()}
@@ -576,7 +603,7 @@ export default function ModalAjustesEstudio({
             </div>
           </section>
 
-          {/* 3. APARIENCIA Y LECTURA (PALETA DEL SISTEMA EN VIVO) */}
+          {/* 3. APARIENCIA Y LECTURA */}
           <section className="space-y-4">
             <h3 className="text-sm font-bold text-white pb-2 border-b border-gray-800/80">
               {t.s3}
@@ -634,7 +661,6 @@ export default function ModalAjustesEstudio({
               </div>
             </div>
 
-            {/* PALETA DEL SISTEMA (6 PALETAS CON APLICACIÓN EN VIVO) */}
             <div className="bg-[#1A1A1A] border border-gray-800 rounded-2xl p-4 space-y-3">
               <div className="flex justify-between items-center">
                 <span className="text-xs font-bold text-white flex items-center gap-2">
@@ -849,6 +875,7 @@ export default function ModalAjustesEstudio({
           </div>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }
