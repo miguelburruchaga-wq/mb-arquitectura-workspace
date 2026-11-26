@@ -5,6 +5,7 @@ import { createPortal } from 'react-dom';
 import { useRouter } from 'next/navigation';
 import { supabase } from '@/lib/supabase';
 import { moverAPapelera } from '@/lib/papelera';
+import VisorArchivoModal from '@/components/VisorArchivoModal';
 import {
   Plus,
   Search,
@@ -18,6 +19,10 @@ import {
   X,
   CheckCircle2,
   User,
+  Upload,
+  Link2,
+  FileText,
+  Loader2,
 } from 'lucide-react';
 
 export const ESTADOS_PRESUPUESTO = [
@@ -29,6 +34,20 @@ export const ESTADOS_PRESUPUESTO = [
 ] as const;
 
 export const PRIORIDADES_PRESUPUESTO = ['Urgente', 'Alta', 'Normal', 'Baja'] as const;
+
+export const TIPOLOGIAS_OBRA = [
+  'Vivienda Unifamiliar',
+  'Vivienda Multifamiliar',
+  'Estación de Servicio',
+  'Local Comercial',
+  'Oficinas / Corporativo',
+  'Industrial / Galpón',
+  'Gastronomía / Hotel',
+  'Remodelación / Reforma',
+  'Interiorismo',
+  'Urbanismo / Exterior',
+  'Otro',
+] as const;
 
 function estiloEstado(estado: string) {
   switch (estado) {
@@ -140,15 +159,19 @@ export default function PresupuestosClient({
   const [filtroPrioridad, setFiltroPrioridad] = useState('Todas');
   const [filtroAsignado, setFiltroAsignado] = useState('Todos');
 
+  // Visor PDF integrado
+  const [visorArchivo, setVisorArchivo] = useState<{ url: string; titulo: string } | null>(null);
+
   // Modal Nuevo / Editar Presupuesto
   const [modalAbierto, setModalAbierto] = useState(false);
   const [editando, setEditando] = useState<any | null>(null);
   const [guardando, setGuardando] = useState(false);
+  const [subiendoPdf, setSubiendoPdf] = useState(false);
 
   const [codigo, setCodigo] = useState('');
   const [titulo, setTitulo] = useState('');
   const [clienteId, setClienteId] = useState('');
-  const [tipologia, setTipologia] = useState('Vivienda Unifamiliar');
+  const [tipologia, setTipologia] = useState<string>(TIPOLOGIAS_OBRA[0]);
   const [moneda, setMoneda] = useState<'USD' | 'ARS'>('USD');
   const [montoTexto, setMontoTexto] = useState('');
   const [asignadoNombre, setAsignadoNombre] = useState('');
@@ -157,9 +180,11 @@ export default function PresupuestosClient({
   const [fechaLimite, setFechaLimite] = useState('');
   const [prioridad, setPrioridad] = useState<string>('Normal');
   const [estado, setEstado] = useState<string>('Pendiente');
+  const [archivoUrl, setArchivoUrl] = useState('');
+  const [archivoNombre, setArchivoNombre] = useState('');
   const [notas, setNotas] = useState('');
 
-  // Dropdowns personalizados en modal (Persona asignada con avatar + Prioridad con bandera)
+  // Dropdowns personalizados en modal
   const [dropPersonaAbierto, setDropPersonaAbierto] = useState(false);
   const [dropPrioridadAbierto, setDropPrioridadAbierto] = useState(false);
   const refPersona = useRef<HTMLDivElement>(null);
@@ -209,7 +234,7 @@ export default function PresupuestosClient({
     setCodigo(generarCodigo());
     setTitulo('');
     setClienteId('');
-    setTipologia('Vivienda Unifamiliar');
+    setTipologia(TIPOLOGIAS_OBRA[0]);
     setMoneda('USD');
     setMontoTexto('');
     setAsignadoNombre(equipo[0]?.nombre || 'Alejandro Fego');
@@ -218,6 +243,8 @@ export default function PresupuestosClient({
     setFechaLimite('');
     setPrioridad('Normal');
     setEstado('Pendiente');
+    setArchivoUrl('');
+    setArchivoNombre('');
     setNotas('');
     setModalAbierto(true);
   };
@@ -227,7 +254,7 @@ export default function PresupuestosClient({
     setCodigo(p.codigo || '');
     setTitulo(p.titulo || '');
     setClienteId(p.cliente_id ? String(p.cliente_id) : '');
-    setTipologia(p.tipologia || '');
+    setTipologia(p.tipologia || TIPOLOGIAS_OBRA[0]);
     setMoneda(String(p.moneda || 'USD').toUpperCase() === 'ARS' ? 'ARS' : 'USD');
     const m = Number(p.monto_estimado || 0);
     setMontoTexto(
@@ -244,8 +271,38 @@ export default function PresupuestosClient({
     setFechaLimite(p.fecha_limite || '');
     setPrioridad(p.prioridad || 'Normal');
     setEstado(p.estado || 'Pendiente');
+    setArchivoUrl(p.archivo_url || '');
+    setArchivoNombre(p.archivo_nombre || '');
     setNotas(p.notas || '');
     setModalAbierto(true);
+  };
+
+  const manejarSubidaArchivo = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setSubiendoPdf(true);
+    try {
+      const nombreLimpio = file.name.replace(/\s+/g, '_');
+      const ruta = `presupuestos/${Date.now()}_${nombreLimpio}`;
+      const { error } = await supabase.storage
+        .from('documentos')
+        .upload(ruta, file, { upsert: true });
+
+      if (!error) {
+        const { data } = supabase.storage.from('documentos').getPublicUrl(ruta);
+        setArchivoUrl(data.publicUrl);
+        if (!archivoNombre) setArchivoNombre(file.name);
+      } else {
+        const reader = new FileReader();
+        reader.onload = () => {
+          setArchivoUrl(String(reader.result || ''));
+          if (!archivoNombre) setArchivoNombre(file.name);
+        };
+        reader.readAsDataURL(file);
+      }
+    } finally {
+      setSubiendoPdf(false);
+    }
   };
 
   const guardarPresupuesto = async (e: React.FormEvent) => {
@@ -262,7 +319,7 @@ export default function PresupuestosClient({
         titulo: titulo.trim(),
         cliente_id: clienteId || null,
         cliente_nombre: cli ? cli.nombre : null,
-        tipologia: tipologia.trim() || null,
+        tipologia: tipologia || null,
         moneda,
         monto_estimado: parsearNum(montoTexto),
         asignado_nombre: asignadoNombre || null,
@@ -272,6 +329,8 @@ export default function PresupuestosClient({
         fecha_limite: fechaLimite || null,
         prioridad,
         estado,
+        archivo_url: archivoUrl.trim() || null,
+        archivo_nombre: archivoNombre.trim() || null,
         notas: notas.trim() || null,
       };
 
@@ -507,7 +566,7 @@ export default function PresupuestosClient({
                   <th className="py-3.5 px-4">FECHA LÍMITE</th>
                   <th className="py-3.5 px-4">PRIORIDAD</th>
                   <th className="py-3.5 px-4">ESTADO</th>
-                  <th className="py-3.5 px-4 text-right">MONTO / ACCIONES</th>
+                  <th className="py-3.5 px-4 text-right">MONTO / PDF / ACCIONES</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-white/10 text-xs">
@@ -599,12 +658,29 @@ export default function PresupuestosClient({
 
                         <td className="py-3.5 px-4 text-right">
                           <div className="inline-flex items-center gap-2">
-                            <span className="font-extrabold text-white mr-2">
+                            <span className="font-extrabold text-white mr-1">
                               {p.moneda || 'USD'} $
                               {Number(p.monto_estimado || 0).toLocaleString('es-AR', {
                                 maximumFractionDigits: 2,
                               })}
                             </span>
+
+                            {p.archivo_url && (
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  setVisorArchivo({
+                                    url: p.archivo_url,
+                                    titulo: p.archivo_nombre || `${p.codigo} · ${p.titulo}`,
+                                  })
+                                }
+                                className="px-2 py-1 rounded-lg bg-blue-500/15 border border-blue-500/40 text-blue-400 hover:bg-blue-500/25 font-bold inline-flex items-center gap-1 cursor-pointer"
+                                title={p.archivo_nombre || 'Ver archivo adjunto'}
+                              >
+                                <FileText className="w-3.5 h-3.5" /> PDF
+                              </button>
+                            )}
+
                             <button
                               type="button"
                               onClick={() => abrirEditar(p)}
@@ -689,7 +765,8 @@ export default function PresupuestosClient({
                           <div>
                             <div className="text-xs font-extrabold text-white">{p.titulo}</div>
                             <div className="text-[11px] text-gray-400">
-                              {p.cliente_nombre || 'Sin cliente'}
+                              {p.cliente_nombre || 'Sin cliente'}{' '}
+                              {p.tipologia ? `· ${p.tipologia}` : ''}
                             </div>
                           </div>
 
@@ -728,6 +805,21 @@ export default function PresupuestosClient({
                             </div>
 
                             <div className="flex items-center gap-1">
+                              {p.archivo_url && (
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    setVisorArchivo({
+                                      url: p.archivo_url,
+                                      titulo: p.archivo_nombre || p.titulo,
+                                    })
+                                  }
+                                  className="p-1 rounded hover:bg-blue-950/60 text-blue-400 cursor-pointer"
+                                  title="Ver PDF"
+                                >
+                                  <FileText className="w-3 h-3" />
+                                </button>
+                              )}
                               <button
                                 type="button"
                                 onClick={() => abrirEditar(p)}
@@ -856,7 +948,7 @@ export default function PresupuestosClient({
                     {editando ? 'Editar Presupuesto' : 'Nuevo Presupuesto'}
                   </h2>
                   <p className="text-xs text-gray-400 mt-0.5">
-                    Asignación de responsable, fechas clave, prioridad y estado comercial
+                    Asignación de responsable, fechas clave, prioridad, estado y archivo PDF
                   </p>
                 </div>
                 <button
@@ -888,7 +980,7 @@ export default function PresupuestosClient({
                       required
                       value={titulo}
                       onChange={(e) => setTitulo(e.target.value)}
-                      placeholder="Ej. Vivienda Unifamiliar Canning"
+                      placeholder="Ej. Shell Enerse"
                       className="w-full bg-[#121212] border border-gray-800 rounded-lg px-3 py-2 text-xs text-white"
                     />
                   </div>
@@ -911,16 +1003,22 @@ export default function PresupuestosClient({
                     </select>
                   </div>
 
+                  {/* DESPLEGABLE DE TIPOLOGÍA COMO EN PROYECTO */}
                   <div>
                     <label className="block text-xs font-semibold text-gray-300 mb-1">
                       Tipología
                     </label>
-                    <input
-                      type="text"
+                    <select
                       value={tipologia}
                       onChange={(e) => setTipologia(e.target.value)}
                       className="w-full bg-[#121212] border border-gray-800 rounded-lg px-3 py-2 text-xs text-white"
-                    />
+                    >
+                      {TIPOLOGIAS_OBRA.map((tip) => (
+                        <option key={tip} value={tip}>
+                          {tip}
+                        </option>
+                      ))}
+                    </select>
                   </div>
 
                   <div>
@@ -947,9 +1045,8 @@ export default function PresupuestosClient({
                   </div>
                 </div>
 
-                {/* PERSONA ASIGNADA (CON AVATAR / INICIALES) + PRIORIDAD (BANDERITAS) + ESTADO */}
+                {/* PERSONA ASIGNADA + PRIORIDAD + ESTADO */}
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                  {/* Desplegable Persona Asignada con círculo de foto o iniciales */}
                   <div ref={refPersona} className="relative">
                     <label className="block text-xs font-semibold text-gray-300 mb-1">
                       Persona asignada
@@ -968,7 +1065,11 @@ export default function PresupuestosClient({
                           />
                         ) : (
                           <span className="w-6 h-6 rounded-full bg-gray-800 text-white font-extrabold text-[10px] flex items-center justify-center flex-shrink-0">
-                            {asignadoNombre ? obtenerIniciales(asignadoNombre) : <User className="w-3 h-3" />}
+                            {asignadoNombre ? (
+                              obtenerIniciales(asignadoNombre)
+                            ) : (
+                              <User className="w-3 h-3" />
+                            )}
                           </span>
                         )}
                         <span className="truncate">{asignadoNombre || 'Seleccionar...'}</span>
@@ -1006,7 +1107,6 @@ export default function PresupuestosClient({
                     )}
                   </div>
 
-                  {/* Desplegable Prioridad con banderitas */}
                   <div ref={refPrioridad} className="relative">
                     <label className="block text-xs font-semibold text-gray-300 mb-1">
                       Prioridad
@@ -1058,7 +1158,6 @@ export default function PresupuestosClient({
                     )}
                   </div>
 
-                  {/* Desplegable Estado con colores diferenciados */}
                   <div>
                     <label className="block text-xs font-semibold text-gray-300 mb-1">Estado</label>
                     <select
@@ -1077,7 +1176,7 @@ export default function PresupuestosClient({
                   </div>
                 </div>
 
-                {/* FECHA DE LLEGADA, FECHA INICIO, FECHA LÍMITE */}
+                {/* FECHAS */}
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                   <div>
                     <label className="block text-xs font-semibold text-gray-300 mb-1">
@@ -1114,6 +1213,66 @@ export default function PresupuestosClient({
                   </div>
                 </div>
 
+                {/* CARGA DE PDF DEL PRESUPUESTO + ENLACE EXTERNO (ESTILO BITÁCORA) */}
+                <div className="bg-[#141414] border border-gray-800 rounded-xl p-4 space-y-3">
+                  <div>
+                    <div className="text-xs font-bold text-white flex items-center gap-1.5">
+                      <FileText className="w-3.5 h-3.5 text-[#EAB308]" />
+                      Documento del Presupuesto (PDF / Cómputo / Drive)
+                    </div>
+                    <p className="text-[11px] text-gray-400 mt-0.5">
+                      Subí el PDF del presupuesto desde tu dispositivo o pegá abajo un enlace externo (Google Drive, Dropbox, OneDrive).
+                    </p>
+                  </div>
+
+                  <label className="border-2 border-dashed border-gray-700 hover:border-[#EAB308] rounded-xl p-5 flex flex-col items-center justify-center text-center cursor-pointer transition-colors bg-[#121212]">
+                    {subiendoPdf ? (
+                      <Loader2 className="w-6 h-6 text-[#EAB308] animate-spin mb-1.5" />
+                    ) : (
+                      <Upload className="w-6 h-6 text-[#EAB308] mb-1.5" />
+                    )}
+                    <span className="text-xs font-extrabold text-[#EAB308]">
+                      {subiendoPdf
+                        ? 'Subiendo archivo...'
+                        : 'Hacé clic aquí para adjuntar PDF del presupuesto'}
+                    </span>
+                    <span className="text-[11px] text-gray-400 mt-1">
+                      {archivoUrl
+                        ? `Archivo vinculado: ${archivoNombre || 'Documento adjunto ✓'}`
+                        : 'Para archivos pesados o carpetas compartidas, pegá el enlace de Google Drive abajo.'}
+                    </span>
+                    <input
+                      type="file"
+                      accept=".pdf,.doc,.docx,.xls,.xlsx,image/*"
+                      onChange={manejarSubidaArchivo}
+                      className="hidden"
+                    />
+                  </label>
+
+                  <div className="space-y-1.5">
+                    <label className="text-[11px] font-bold text-gray-300 flex items-center gap-1.5">
+                      <Link2 className="w-3.5 h-3.5 text-[#EAB308]" />
+                      O pegar enlace externo (Google Drive, Dropbox, OneDrive):
+                    </label>
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
+                      <input
+                        type="text"
+                        value={archivoUrl}
+                        onChange={(e) => setArchivoUrl(e.target.value)}
+                        placeholder="https://drive.google.com/..."
+                        className="md:col-span-2 bg-[#121212] border border-gray-800 rounded-lg px-3 py-2 text-xs text-white"
+                      />
+                      <input
+                        type="text"
+                        value={archivoNombre}
+                        onChange={(e) => setArchivoNombre(e.target.value)}
+                        placeholder="Nombre visible"
+                        className="bg-[#121212] border border-gray-800 rounded-lg px-3 py-2 text-xs text-white"
+                      />
+                    </div>
+                  </div>
+                </div>
+
                 <div>
                   <label className="block text-xs font-semibold text-gray-300 mb-1">
                     Alcance y Notas
@@ -1147,6 +1306,14 @@ export default function PresupuestosClient({
           </div>,
           document.body
         )}
+
+      {/* VISOR PDF INTEGRADO */}
+      <VisorArchivoModal
+        abierto={Boolean(visorArchivo)}
+        url={visorArchivo?.url || ''}
+        titulo={visorArchivo?.titulo}
+        onClose={() => setVisorArchivo(null)}
+      />
 
       {toast &&
         montado &&

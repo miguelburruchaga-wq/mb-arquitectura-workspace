@@ -85,10 +85,10 @@ export default function Sidebar() {
     .toUpperCase();
 
   return (
-    <aside className="w-64 bg-[#111111] border-r border-white/10 min-h-screen flex flex-col justify-between p-4 flex-shrink-0 select-none">
-      <div>
-        <div className="flex items-center gap-3 px-2 py-3 mb-6">
-          <div className="w-10 h-10 rounded-xl bg-white text-black font-black text-base flex items-center justify-center shadow">
+    <aside className="w-64 m-3 h-[calc(100vh-1.5rem)] sticky top-3 bg-[#181818] border border-white/10 rounded-[28px] shadow-2xl flex flex-col justify-between p-4 flex-shrink-0 select-none z-30">
+      <div className="overflow-y-auto pr-0.5">
+        <div className="flex items-center gap-3 px-2 py-2.5 mb-5">
+          <div className="w-10 h-10 rounded-full bg-white text-black font-black text-sm flex items-center justify-center shadow">
             MB
           </div>
           <div>
@@ -96,7 +96,7 @@ export default function Sidebar() {
               ARQUITECTOS
             </div>
             <div className="text-[10px] tracking-[0.2em] text-gray-400 font-semibold">
-              WORKSPACE
+              | WORKSPACE
             </div>
           </div>
         </div>
@@ -125,7 +125,7 @@ export default function Sidebar() {
         </nav>
       </div>
 
-      <div className="pt-4 border-t border-white/10 space-y-2">
+      <div className="pt-3 border-t border-white/10 space-y-1.5">
         <Link
           href="/papelera"
           className={`flex items-center justify-between px-3.5 py-2 rounded-xl text-xs font-semibold transition-colors ${
@@ -155,7 +155,7 @@ export default function Sidebar() {
           <Settings className="w-4 h-4" /> Configuración
         </Link>
 
-        <div className="bg-[#181818] border border-white/10 rounded-xl p-2.5 flex items-center justify-between gap-2 mt-2">
+        <div className="bg-[#121212] border border-white/10 rounded-2xl p-2.5 flex items-center justify-between gap-2 mt-2">
           <div className="flex items-center gap-2.5 min-w-0">
             {usuario.foto_url ? (
               <img
@@ -164,7 +164,7 @@ export default function Sidebar() {
                 className="w-8 h-8 rounded-full object-cover flex-shrink-0"
               />
             ) : (
-              <div className="w-8 h-8 rounded-full bg-gray-800 text-[#D4EE36] font-extrabold text-xs flex items-center justify-center flex-shrink-0">
+              <div className="w-8 h-8 rounded-full bg-white text-black font-extrabold text-xs flex items-center justify-center flex-shrink-0">
                 {iniciales}
               </div>
             )}

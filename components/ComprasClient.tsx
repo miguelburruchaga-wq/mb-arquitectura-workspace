@@ -35,6 +35,21 @@ const COLORES_TORTA = [
   '#CBD5E1',
 ];
 
+const NOMBRES_MESES: Record<string, string> = {
+  '01': 'Enero',
+  '02': 'Febrero',
+  '03': 'Marzo',
+  '04': 'Abril',
+  '05': 'Mayo',
+  '06': 'Junio',
+  '07': 'Julio',
+  '08': 'Agosto',
+  '09': 'Septiembre',
+  '10': 'Octubre',
+  '11': 'Noviembre',
+  '12': 'Diciembre',
+};
+
 export default function ComprasClient({
   comprasIniciales = [],
   proyectos = [],
@@ -52,6 +67,7 @@ export default function ComprasClient({
   const [busqueda, setBusqueda] = useState('');
   const [filtroProyecto, setFiltroProyecto] = useState('Todas');
   const [filtroEstado, setFiltroEstado] = useState('Todos');
+  const [filtroMesAnio, setFiltroMesAnio] = useState('Todos');
 
   const [modalCompra, setModalCompra] = useState(false);
   const [compraEditando, setCompraEditando] = useState<any | null>(null);
@@ -70,6 +86,26 @@ export default function ComprasClient({
     setToast(msg);
     setTimeout(() => setToast(null), 3200);
   };
+
+  // Opciones dinámicas de Mes / Año extraídas de las compras cargadas (ej. "2026-11" -> "Noviembre 2026")
+  const opcionesMesAnio = useMemo(() => {
+    const setPeriodos = new Set<string>();
+    for (const c of compras) {
+      const f = String(c.fecha || '').trim();
+      if (/^\d{4}-\d{2}/.test(f)) {
+        setPeriodos.add(f.slice(0, 7));
+      }
+    }
+    return Array.from(setPeriodos)
+      .sort((a, b) => b.localeCompare(a))
+      .map((ym) => {
+        const [anio, mes] = ym.split('-');
+        return {
+          valor: ym,
+          etiqueta: `${NOMBRES_MESES[mes] || mes} ${anio}`,
+        };
+      });
+  }, [compras]);
 
   const eliminarCompraDirecto = async (e: React.MouseEvent, item: any) => {
     e.stopPropagation();
@@ -100,9 +136,12 @@ export default function ComprasClient({
       }
       if (filtroProyecto !== 'Todas' && c.proyecto_codigo !== filtroProyecto) return false;
       if (filtroEstado !== 'Todos' && c.estado !== filtroEstado) return false;
+      if (filtroMesAnio !== 'Todos' && !String(c.fecha || '').startsWith(filtroMesAnio)) {
+        return false;
+      }
       return true;
     });
-  }, [compras, busqueda, filtroProyecto, filtroEstado]);
+  }, [compras, busqueda, filtroProyecto, filtroEstado, filtroMesAnio]);
 
   const totalUsdFiltrado = useMemo(() => {
     return comprasFiltradas.reduce((acc, c) => {
@@ -156,7 +195,6 @@ export default function ComprasClient({
     [resumenPorProveedor]
   );
 
-  // Gradiente cónico para el gráfico circular de participación
   const conicGradientTorta = useMemo(() => {
     if (resumenPorProveedor.length === 0) return 'conic-gradient(#333 0% 100%)';
     let acumulado = 0;
@@ -217,9 +255,9 @@ export default function ComprasClient({
         </div>
       </div>
 
-      {/* FILTROS Y TOTAL EQUIVALENTE USD */}
+      {/* FILTROS (BUSCADOR + MES/AÑO + OBRA + ESTADO + TOTAL USD) */}
       <div className="bg-[#242424] border border-white/10 rounded-2xl p-4 mb-6 flex flex-wrap items-center gap-3">
-        <div className="relative flex-1 min-w-[220px]">
+        <div className="relative flex-1 min-w-[200px]">
           <Search className="w-4 h-4 text-gray-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
           <input
             type="text"
@@ -229,6 +267,19 @@ export default function ComprasClient({
             className="w-full bg-[#181818] border border-white/10 rounded-xl pl-10 pr-4 py-2 text-xs text-white placeholder-gray-400"
           />
         </div>
+
+        <select
+          value={filtroMesAnio}
+          onChange={(e) => setFiltroMesAnio(e.target.value)}
+          className="bg-[#181818] border border-white/10 rounded-xl px-3 py-2 text-xs font-semibold text-white cursor-pointer"
+        >
+          <option value="Todos">Mes / Año: Todos</option>
+          {opcionesMesAnio.map((op) => (
+            <option key={op.valor} value={op.valor}>
+              {op.etiqueta}
+            </option>
+          ))}
+        </select>
 
         <select
           value={filtroProyecto}
@@ -375,7 +426,6 @@ export default function ComprasClient({
                             </button>
                           )}
 
-                          {/* ÍCONO ROJO DE PAPELERA A LA DERECHA DE PDF */}
                           <button
                             type="button"
                             onClick={(e) => eliminarCompraDirecto(e, c)}
@@ -395,7 +445,7 @@ export default function ComprasClient({
         </div>
       )}
 
-      {/* VISTA 2: RESUMEN POR PROVEEDOR (TABLA NETO ARS / NETO USD + GRÁFICO CIRCULAR) */}
+      {/* VISTA 2: RESUMEN POR PROVEEDOR */}
       {vista === 'proveedores' && (
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
           <div className="lg:col-span-6 bg-[#242424] border border-white/10 rounded-2xl overflow-hidden shadow-xl">
@@ -434,10 +484,18 @@ export default function ComprasClient({
                           <span className="truncate">{row.proveedor}</span>
                         </td>
                         <td className="py-2.5 px-4 text-right font-semibold text-gray-200">
-                          $ {row.netoArs.toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                          ${' '}
+                          {row.netoArs.toLocaleString('es-AR', {
+                            minimumFractionDigits: 2,
+                            maximumFractionDigits: 2,
+                          })}
                         </td>
                         <td className="py-2.5 px-4 text-right font-extrabold text-[#EAB308]">
-                          USD ${row.netoUsd.toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                          USD $
+                          {row.netoUsd.toLocaleString('es-AR', {
+                            minimumFractionDigits: 2,
+                            maximumFractionDigits: 2,
+                          })}
                         </td>
                         <td className="py-2.5 px-3 text-right text-gray-400 font-bold">
                           {row.porcentaje.toFixed(1)}%
@@ -451,10 +509,18 @@ export default function ComprasClient({
                     <tr className="bg-[#181818] border-t border-white/15 font-extrabold text-xs">
                       <td className="py-3 px-4 text-white">TOTAL GENERAL</td>
                       <td className="py-3 px-4 text-right text-white">
-                        $ {totalArsProveedores.toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                        ${' '}
+                        {totalArsProveedores.toLocaleString('es-AR', {
+                          minimumFractionDigits: 2,
+                          maximumFractionDigits: 2,
+                        })}
                       </td>
                       <td className="py-3 px-4 text-right text-emerald-400">
-                        USD ${totalUsdFiltrado.toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                        USD $
+                        {totalUsdFiltrado.toLocaleString('es-AR', {
+                          minimumFractionDigits: 2,
+                          maximumFractionDigits: 2,
+                        })}
                       </td>
                       <td className="py-3 px-3 text-right text-white">100%</td>
                     </tr>
@@ -504,7 +570,6 @@ export default function ComprasClient({
         </div>
       )}
 
-      {/* VISOR PDF INTEGRADO */}
       <VisorArchivoModal
         abierto={Boolean(visorArchivo)}
         url={visorArchivo?.url || ''}
@@ -512,7 +577,6 @@ export default function ComprasClient({
         onClose={() => setVisorArchivo(null)}
       />
 
-      {/* MODAL COMPRA / FACTURA */}
       <ModalCompraPedido
         abierto={modalCompra}
         onClose={() => {

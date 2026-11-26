@@ -71,6 +71,8 @@ export async function extraerDatosFacturaPdf(file: File): Promise<{
   importe: string | null;
   nroFactura: string | null;
   fechaDetectada: string | null;
+  cuitDetectado: string | null;
+  proveedorSugerido: string | null;
   conceptoSugerido: string | null;
   monedaDetectada: 'ARS' | 'USD' | null;
   textoCompleto: string;
@@ -80,7 +82,17 @@ export async function extraerDatosFacturaPdf(file: File): Promise<{
     const textoPdfInterno = await extraerTextoConPdfJs(buffer);
     const nombreArchivo = file.name.replace(/\.pdf$/i, '');
 
-    // 1. FECHA DE EMISIÓN
+    // 0. CUIT DEL PROVEEDOR (ignora el CUIT propio de MB Arquitectura SA: 30-71624594-9)
+    let cuitDetectado: string | null = null;
+    const todosCuits = [
+      ...textoPdfInterno.matchAll(/\b(20|23|24|27|30|33|34)[-\s]?(\d{8})[-\s]?(\d)\b/g),
+    ].map((m) => `${m[1]}-${m[2]}-${m[3]}`);
+    const cuitEmisor = todosCuits.find((c) => c !== '30-71624594-9');
+    if (cuitEmisor) {
+      cuitDetectado = cuitEmisor;
+    }
+
+    // 1. FECHA DE EMISIÓN (soporta espacios "08 /07 /26" y año de 2 o 4 dígitos; ignora Inicio de Actividades y VTO)
     let fechaDetectada: string | null = null;
 
     const matchFechaTexto = textoPdfInterno.match(
@@ -97,12 +109,15 @@ export async function extraerDatosFacturaPdf(file: File): Promise<{
 
     if (!fechaDetectada) {
       const matchFechaEtiqueta = textoPdfInterno.match(
-        /(?:Fecha\s+de\s+Emisi[oó]n|Fecha\s+Comprobante|Fecha\s*:)[:\s]*(\d{1,2})[\/\-](\d{1,2})[\/\-](20\d{2})/i
+        /(?:Fecha\s+de\s+Emisi[oó]n|Fecha\s+Comprobante|Fecha)[:\s]*(\d{1,2})\s*[\/\-]\s*(\d{1,2})\s*[\/\-]\s*(20\d{2}|\d{2})\b/i
       );
       if (matchFechaEtiqueta) {
         const dia = matchFechaEtiqueta[1].padStart(2, '0');
         const mes = matchFechaEtiqueta[2].padStart(2, '0');
-        const anio = matchFechaEtiqueta[3];
+        const anio =
+          matchFechaEtiqueta[3].length === 2
+            ? `20${matchFechaEtiqueta[3]}`
+            : matchFechaEtiqueta[3];
         if (Number(mes) >= 1 && Number(mes) <= 12 && Number(dia) >= 1 && Number(dia) <= 31) {
           fechaDetectada = `${anio}-${mes}-${dia}`;
         }
@@ -111,13 +126,17 @@ export async function extraerDatosFacturaPdf(file: File): Promise<{
 
     if (!fechaDetectada) {
       const encabezado = textoPdfInterno.slice(0, 900);
-      const todasFechas = [...encabezado.matchAll(/\b(\d{1,2})[\/\-](\d{1,2})[\/\-](20\d{2})\b/g)];
+      const todasFechas = [
+        ...encabezado.matchAll(/\b(\d{1,2})\s*[\/\-]\s*(\d{1,2})\s*[\/\-]\s*(20\d{2}|\d{2})\b/g),
+      ];
       const candidatas: string[] = [];
 
       for (const m of todasFechas) {
         const idx = m.index || 0;
         const previo = encabezado.slice(Math.max(0, idx - 45), idx).toLowerCase();
-        const posterior = encabezado.slice(idx, Math.min(encabezado.length, idx + 45)).toLowerCase();
+        const posterior = encabezado
+          .slice(idx, Math.min(encabezado.length, idx + 45))
+          .toLowerCase();
 
         if (
           previo.includes('inicio') ||
@@ -133,7 +152,7 @@ export async function extraerDatosFacturaPdf(file: File): Promise<{
 
         const dia = m[1].padStart(2, '0');
         const mes = m[2].padStart(2, '0');
-        const anio = m[3];
+        const anio = m[3].length === 2 ? `20${m[3]}` : m[3];
         if (Number(mes) >= 1 && Number(mes) <= 12 && Number(dia) >= 1 && Number(dia) <= 31) {
           candidatas.push(`${anio}-${mes}-${dia}`);
         }
@@ -169,10 +188,10 @@ export async function extraerDatosFacturaPdf(file: File): Promise<{
 
     if (!nroFactura) {
       const matchComprobante = textoPdfInterno.match(
-        /(?:Factura\s*[ABC]?\s*(?:N[°ºo.]*)?|Comprobante\s*(?:N[°ºo.]*)?|N[°ºo.]\s*)[:\s]*(\d{4,5}-\d{6,8})/i
+        /(?:Factura\s*[ABC]?\s*(?:N[°ºo.]*)?|Comprobante\s*(?:N[°ºo.]*)?|NRO\.?|N[°ºo.]\s*)[:\s]*(\d{4,5}\s*-\s*\d{6,8})/i
       );
       if (matchComprobante) {
-        nroFactura = matchComprobante[1];
+        nroFactura = matchComprobante[1].replace(/\s+/g, '');
       } else {
         const matchGenericoPdf = textoPdfInterno.match(/\b(\d{4,5}-\d{6,8})\b/);
         if (matchGenericoPdf) {
@@ -186,10 +205,9 @@ export async function extraerDatosFacturaPdf(file: File): Promise<{
       if (matchNombreOc) nroFactura = matchNombreOc[1];
     }
 
-    // 3. IMPORTE SUBTOTAL / NETO GRAVADO
+    // 3. IMPORTE SUBTOTAL / NETO GRAVADO (soporta ":" intermedio como "Subtotal : 36,100.46")
     let montoDetectado = 0;
 
-    // A) Buscar explícitamente "Subtotal $ 691,239.78" o "Neto Gravado: $ ..."
     const regexEtiquetaNeto =
       /(?:Importe\s+Neto\s+Gravado|Neto\s+Gravado|Total\s+Neto|Subtotal(?:\s+Neto)?)[:\s]*\$?\s*(\d{1,3}(?:[.,]\d{3})*[.,]\d{2}|\d+[.,]\d{2})/gi;
     const candidatosEtiqueta: number[] = [];
@@ -203,7 +221,6 @@ export async function extraerDatosFacturaPdf(file: File): Promise<{
       montoDetectado = Math.max(...candidatosEtiqueta);
     }
 
-    // B) Respaldo analizando los montos de la mitad inferior del documento
     if (montoDetectado === 0) {
       const zonaInferior = textoPdfInterno.slice(Math.floor(textoPdfInterno.length * 0.35));
       const regexMontos = /\$?\s*(\d{1,3}(?:[.,]\d{3})*[.,]\d{2}|\d+[.,]\d{2})/g;
@@ -253,12 +270,20 @@ export async function extraerDatosFacturaPdf(file: File): Promise<{
     const monedaDetectada: 'ARS' | 'USD' | null =
       /\b(?:USD|U\$S|DOLARES|DÓLARES)\b/i.test(textoPdfInterno) ? 'USD' : null;
 
+    const proveedorSugerido =
+      nombreArchivo
+        .replace(/^\d{1,2}[\/\-]\d{1,2}\s*/, '')
+        .replace(/[_-]+/g, ' ')
+        .trim() || null;
+
     const nombreLimpio = nombreArchivo.replace(/[_-]+/g, ' ').trim();
 
     return {
       importe: importeFormateado,
       nroFactura,
       fechaDetectada,
+      cuitDetectado,
+      proveedorSugerido,
       conceptoSugerido: nombreLimpio.length > 2 ? nombreLimpio : null,
       monedaDetectada,
       textoCompleto: textoPdfInterno,
@@ -268,6 +293,8 @@ export async function extraerDatosFacturaPdf(file: File): Promise<{
       importe: null,
       nroFactura: null,
       fechaDetectada: null,
+      cuitDetectado: null,
+      proveedorSugerido: null,
       conceptoSugerido: null,
       monedaDetectada: null,
       textoCompleto: '',
