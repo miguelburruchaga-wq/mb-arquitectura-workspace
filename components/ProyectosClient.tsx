@@ -25,11 +25,20 @@ import {
 export const ETAPAS_OBRA = [
   'Relevamiento y Concepto',
   'Anteproyecto y Diseño',
+  'Presupuesto',
   'Proyecto Ejecutivo y Detalles',
-  'Presupuesto y Compras',
+  'Compras',
   'Dirección y Ejecución de Obra',
   'Entrega Final',
 ];
+
+function normalizarEtapaObra(rawEtapa?: string | null): string {
+  const val = String(rawEtapa || '').trim();
+  if (!val) return ETAPAS_OBRA[0];
+  if (val === 'Entrega y Post-Obra') return 'Entrega Final';
+  if (val === 'Presupuesto y Compras') return 'Compras';
+  return val;
+}
 
 function formatearMilesDecimalesInput(valorCrudo: string): string {
   const limpio = valorCrudo.replace(/[^\d,]/g, '');
@@ -210,10 +219,7 @@ export default function ProyectosClient({
     setTipologia(p.tipologia || '');
     setClienteId(p.cliente_id ? String(p.cliente_id) : '');
     setResponsable(p.responsable || '');
-    const etapaNormalizada =
-      p.etapa === 'Entrega y Post-Obra' || p.etapa_actual === 'Entrega y Post-Obra'
-        ? 'Entrega Final'
-        : p.etapa_actual || p.etapa || ETAPAS_OBRA[0];
+    const etapaNormalizada = normalizarEtapaObra(p.etapa_actual || p.etapa);
     setEtapa(etapaNormalizada);
     setEstado(
       etapaNormalizada === 'Entrega Final'
@@ -336,10 +342,7 @@ export default function ProyectosClient({
   };
 
   const moverEtapaKanban = async (proy: any, direccion: -1 | 1) => {
-    const etapaActualNorm =
-      proy.etapa === 'Entrega y Post-Obra' || proy.etapa_actual === 'Entrega y Post-Obra'
-        ? 'Entrega Final'
-        : proy.etapa_actual || proy.etapa || ETAPAS_OBRA[0];
+    const etapaActualNorm = normalizarEtapaObra(proy.etapa_actual || proy.etapa);
     const idx = Math.max(0, ETAPAS_OBRA.indexOf(etapaActualNorm));
     const nuevoIdx = Math.min(ETAPAS_OBRA.length - 1, Math.max(0, idx + direccion));
     if (nuevoIdx === idx) return;
@@ -408,10 +411,7 @@ export default function ProyectosClient({
   const proyectosFiltrados = useMemo(() => {
     return proyectos.filter((p) => {
       const q = busqueda.trim().toLowerCase();
-      const etapaNorm =
-        p.etapa === 'Entrega y Post-Obra' || p.etapa_actual === 'Entrega y Post-Obra'
-          ? 'Entrega Final'
-          : p.etapa_actual || p.etapa || ETAPAS_OBRA[0];
+      const etapaNorm = normalizarEtapaObra(p.etapa_actual || p.etapa);
       const estadoNorm =
         etapaNorm === 'Entrega Final'
           ? 'Finalizado'
@@ -432,7 +432,6 @@ export default function ProyectosClient({
     });
   }, [proyectos, busqueda, filtroEstado, filtroEtapa, filtroResponsable]);
 
-  // Cálculo de ventana temporal para el Cronograma Comparativo (Planificado vs Real)
   const rangoCronograma = useMemo(() => {
     const fechas: number[] = [Date.now()];
     proyectosFiltrados.forEach((p) => {
@@ -597,23 +596,19 @@ export default function ProyectosClient({
         </select>
       </div>
 
-      {/* VISTA 1: TABLERO KANBAN (6 ETAPAS) */}
+      {/* VISTA 1: TABLERO KANBAN (7 ETAPAS) */}
       {vista === 'kanban' && (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-4">
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 xl:grid-cols-7 gap-3.5">
           {ETAPAS_OBRA.map((etapaCol, idx) => {
-            const itemsCol = proyectosFiltrados.filter((p) => {
-              const et =
-                p.etapa === 'Entrega y Post-Obra' || p.etapa_actual === 'Entrega y Post-Obra'
-                  ? 'Entrega Final'
-                  : p.etapa_actual || p.etapa || ETAPAS_OBRA[0];
-              return et === etapaCol;
-            });
+            const itemsCol = proyectosFiltrados.filter(
+              (p) => normalizarEtapaObra(p.etapa_actual || p.etapa) === etapaCol
+            );
             const m2Totales = itemsCol.reduce((acc, p) => acc + Number(p.superficie || 0), 0);
 
             return (
               <div
                 key={etapaCol}
-                className="bg-[#242424] border border-white/10 rounded-2xl p-3.5 flex flex-col min-h-[420px]"
+                className="bg-[#242424] border border-white/10 rounded-2xl p-3 flex flex-col min-h-[420px]"
               >
                 <div className="mb-3 pb-2.5 border-b border-white/10">
                   <div className="flex items-center justify-between gap-1">
@@ -710,16 +705,16 @@ export default function ProyectosClient({
                             </div>
                           </Link>
 
-                          <div className="px-3 py-2 bg-black/20 border-t border-white/10 flex items-center justify-between gap-1">
+                          <div className="px-2.5 py-2 bg-black/20 border-t border-white/10 flex items-center justify-between gap-1">
                             <button
                               type="button"
                               disabled={idx === 0}
                               onClick={() => moverEtapaKanban(p, -1)}
-                              className="px-2 py-1 rounded bg-[#242424] border border-white/10 text-[10px] font-bold text-gray-300 hover:text-white disabled:opacity-35 cursor-pointer"
+                              className="px-1.5 py-1 rounded bg-[#242424] border border-white/10 text-[10px] font-bold text-gray-300 hover:text-white disabled:opacity-35 cursor-pointer"
                             >
                               ‹ Ant.
                             </button>
-                            <div className="flex items-center gap-1">
+                            <div className="flex items-center gap-0.5">
                               <button
                                 type="button"
                                 onClick={() => abrirModalEditar(p)}
@@ -741,7 +736,7 @@ export default function ProyectosClient({
                               type="button"
                               disabled={idx === ETAPAS_OBRA.length - 1}
                               onClick={() => moverEtapaKanban(p, 1)}
-                              className="px-2 py-1 rounded bg-[#242424] border border-white/10 text-[10px] font-bold text-gray-300 hover:text-white disabled:opacity-35 cursor-pointer"
+                              className="px-1.5 py-1 rounded bg-[#242424] border border-white/10 text-[10px] font-bold text-gray-300 hover:text-white disabled:opacity-35 cursor-pointer"
                             >
                               Sig. ›
                             </button>
@@ -757,7 +752,7 @@ export default function ProyectosClient({
         </div>
       )}
 
-      {/* VISTA 2: CRONOGRAMA COMPARATIVO DE OBRAS EN CURSO (PLANIFICADO VS. REAL CON FECHAS EDITABLES) */}
+      {/* VISTA 2: CRONOGRAMA COMPARATIVO DE OBRAS EN CURSO */}
       {vista === 'cronograma' && (
         <div className="bg-[#242424] border border-white/10 rounded-2xl p-5 shadow-xl overflow-hidden">
           <div className="flex flex-wrap justify-between items-center gap-4 mb-4">
@@ -824,10 +819,7 @@ export default function ProyectosClient({
                   </tr>
                 ) : (
                   proyectosFiltrados.map((p) => {
-                    const etapaNorm =
-                      p.etapa === 'Entrega y Post-Obra' || p.etapa_actual === 'Entrega y Post-Obra'
-                        ? 'Entrega Final'
-                        : p.etapa_actual || p.etapa || ETAPAS_OBRA[0];
+                    const etapaNorm = normalizarEtapaObra(p.etapa_actual || p.etapa);
                     const idxEtapa = Math.max(0, ETAPAS_OBRA.indexOf(etapaNorm));
                     const pctAvance =
                       etapaNorm === 'Entrega Final'
@@ -903,14 +895,12 @@ export default function ProyectosClient({
 
                         <td className="py-2 px-2">
                           <div className="relative h-9 bg-[#181818] rounded-lg border border-white/10 overflow-hidden">
-                            {/* Grilla vertical de meses */}
                             <div className="absolute inset-0 grid grid-flow-col auto-cols-fr pointer-events-none">
                               {rangoCronograma.meses.map((m) => (
                                 <div key={m.key} className="border-r border-white/10 h-full" />
                               ))}
                             </div>
 
-                            {/* Barra Planificada (superior translúcida) */}
                             {barraPlan && (
                               <div
                                 title={`Planificado: ${formatearFechaCorta(
@@ -925,7 +915,6 @@ export default function ProyectosClient({
                               />
                             )}
 
-                            {/* Barra Real (inferior sólida en color de paleta) */}
                             {barraReal && (
                               <div
                                 title={`Real: ${formatearFechaCorta(
@@ -969,10 +958,7 @@ export default function ProyectosClient({
               </thead>
               <tbody className="divide-y divide-white/10 text-xs">
                 {proyectosFiltrados.map((p) => {
-                  const etapaNorm =
-                    p.etapa === 'Entrega y Post-Obra' || p.etapa_actual === 'Entrega y Post-Obra'
-                      ? 'Entrega Final'
-                      : p.etapa_actual || p.etapa || ETAPAS_OBRA[0];
+                  const etapaNorm = normalizarEtapaObra(p.etapa_actual || p.etapa);
                   const estadoNorm =
                     etapaNorm === 'Entrega Final'
                       ? 'Finalizado'
@@ -1050,10 +1036,7 @@ export default function ProyectosClient({
       {vista === 'tarjetas' && (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
           {proyectosFiltrados.map((p) => {
-            const etapaNorm =
-              p.etapa === 'Entrega y Post-Obra' || p.etapa_actual === 'Entrega y Post-Obra'
-                ? 'Entrega Final'
-                : p.etapa_actual || p.etapa || ETAPAS_OBRA[0];
+            const etapaNorm = normalizarEtapaObra(p.etapa_actual || p.etapa);
             const estadoNorm =
               etapaNorm === 'Entrega Final'
                 ? 'Finalizado'
@@ -1099,7 +1082,7 @@ export default function ProyectosClient({
         </div>
       )}
 
-      {/* MODAL NUEVO / EDITAR PROYECTO (CON FORMATO AUTOMÁTICO, CERTIFICACIONES Y REDETERMINACIÓN CAC) */}
+      {/* MODAL NUEVO / EDITAR PROYECTO */}
       {modalAbierto &&
         montado &&
         createPortal(
@@ -1195,7 +1178,6 @@ export default function ProyectosClient({
                   </div>
                 </div>
 
-                {/* BLOQUE PRESUPUESTO + CERTIFICACIONES + REDETERMINACIONES */}
                 <div className="bg-[#141414] border border-gray-800 rounded-xl p-4 space-y-3">
                   <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
                     <div>

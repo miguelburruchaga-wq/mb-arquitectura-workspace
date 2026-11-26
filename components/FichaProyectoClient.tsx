@@ -43,11 +43,20 @@ import {
 const ETAPAS_PROYECTO = [
   'Relevamiento y Concepto',
   'Anteproyecto y Diseño',
+  'Presupuesto',
   'Proyecto Ejecutivo y Detalles',
-  'Presupuesto y Compras',
+  'Compras',
   'Dirección y Ejecución de Obra',
   'Entrega Final',
 ];
+
+function normalizarEtapaProyecto(rawEtapa?: string | null): string {
+  const val = String(rawEtapa || '').trim();
+  if (!val) return 'Relevamiento y Concepto';
+  if (val === 'Entrega y Post-Obra') return 'Entrega Final';
+  if (val === 'Presupuesto y Compras') return 'Compras';
+  return val;
+}
 
 function formatearMilesDecimalesInput(valorCrudo: string): string {
   const limpio = valorCrudo.replace(/[^\d,]/g, '');
@@ -106,13 +115,11 @@ export default function FichaProyectoClient({
   const router = useRouter();
   const [montado, setMontado] = useState(false);
 
-  // Estado local del proyecto para reflejar cambios al instante
   const [datosProyectoLocal, setDatosProyectoLocal] = useState<any>(proyecto);
 
-  const etapaNormalizadaInit =
-    proyecto.etapa === 'Entrega y Post-Obra' || proyecto.etapa_actual === 'Entrega y Post-Obra'
-      ? 'Entrega Final'
-      : proyecto.etapa_actual || proyecto.etapa || 'Relevamiento y Concepto';
+  const etapaNormalizadaInit = normalizarEtapaProyecto(
+    proyecto.etapa_actual || proyecto.etapa
+  );
 
   const [pestanaActiva, setPestanaActiva] = useState<
     'resumen' | 'tareas' | 'visitas' | 'documentos' | 'compras' | 'finanzas' | 'comentarios'
@@ -127,22 +134,18 @@ export default function FichaProyectoClient({
   const [etapaActual, setEtapaActual] = useState(etapaNormalizadaInit);
   const [toast, setToast] = useState<string | null>(null);
 
-  // Estado Económico y Semáforo de Obra
   const [monedaEconomico, setMonedaEconomico] = useState<'USD' | 'ARS'>('USD');
   const [criterioSemaforo, setCriterioSemaforo] = useState<
     'avance_vs_cobrado' | 'margen_neto' | 'plazos_tareas'
   >('avance_vs_cobrado');
 
-  // Visor Modal Integrado + Reporte Cliente
   const [visorArchivo, setVisorArchivo] = useState<{ url: string; titulo: string } | null>(null);
   const [modalReporteCliente, setModalReporteCliente] = useState(false);
 
-  // Filtro de galería en Bitácora
   const [filtroEtiquetaFoto, setFiltroEtiquetaFoto] = useState<
     'Todas' | 'Antes' | 'En Obra' | 'Final de Obra'
   >('Todas');
 
-  // Confirmación Papelera del Proyecto
   const [confirmarPapelera, setConfirmarPapelera] = useState(false);
   const [enviandoPapelera, setEnviandoPapelera] = useState(false);
 
@@ -176,13 +179,11 @@ export default function FichaProyectoClient({
   const [modalVisita, setModalVisita] = useState(false);
   const [visitaEditando, setVisitaEditando] = useState<any | null>(null);
 
-  // Serie Índice CAC desde API CAMARCO
   const [serieCAC, setSerieCAC] = useState<{ periodo: string; etiqueta: string; valor: number }[]>([
     { periodo: 'OCT2026', etiqueta: 'Octubre 2026', valor: 23884.2 },
   ]);
   const [cargandoCAC, setCargandoCAC] = useState(false);
 
-  // Estados del Modal Editar Datos del Proyecto
   const [modalEditarProy, setModalEditarProy] = useState(false);
   const [editNombre, setEditNombre] = useState(proyecto.nombre || '');
   const [editTipologia, setEditTipologia] = useState(proyecto.tipologia || '');
@@ -239,7 +240,6 @@ export default function FichaProyectoClient({
     setMontado(true);
     cargarSerieCAC();
 
-    // Si se ingresa desde Notificaciones (?tab=comentarios), abrir directamente esa pestaña
     if (typeof window !== 'undefined') {
       const params = new URLSearchParams(window.location.search);
       const tabParam = params.get('tab');
@@ -259,10 +259,7 @@ export default function FichaProyectoClient({
 
   useEffect(() => {
     setDatosProyectoLocal(proyecto);
-    const etNorm =
-      proyecto.etapa === 'Entrega y Post-Obra' || proyecto.etapa_actual === 'Entrega y Post-Obra'
-        ? 'Entrega Final'
-        : proyecto.etapa_actual || proyecto.etapa || 'Relevamiento y Concepto';
+    const etNorm = normalizarEtapaProyecto(proyecto.etapa_actual || proyecto.etapa);
     setEtapaActual(etNorm);
     setEstadoProyecto(
       etNorm === 'Entrega Final'
@@ -474,7 +471,6 @@ export default function FichaProyectoClient({
       .update({ comentarios: listaActualizada })
       .eq('codigo', datosProyectoLocal.codigo);
 
-    // Detectar menciones (@Nombre) y registrarlas en comentarios_proyecto para AVISOS DEL EQUIPO
     const mencionesDetectadas = (equipo || [])
       .map((m: any) => String(m.nombre || '').trim())
       .filter((nom: string) => nom && texto.toLowerCase().includes(`@${nom.toLowerCase()}`));
@@ -1095,7 +1091,7 @@ export default function FichaProyectoClient({
       {/* PESTAÑA: RESUMEN GENERAL */}
       {pestanaActiva === 'resumen' && (
         <div className="space-y-6">
-          {/* 1. ETAPA Y AVANCE */}
+          {/* 1. ETAPA Y AVANCE (7 ETAPAS) */}
           <div className="bg-[#242424] border border-white/10 rounded-2xl p-6 shadow-xl">
             <div className="flex flex-wrap justify-between items-start gap-4 mb-5">
               <div>
@@ -1111,7 +1107,7 @@ export default function FichaProyectoClient({
               </span>
             </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-3">
               {ETAPAS_PROYECTO.map((etapa, idx) => {
                 const esActual = etapaActual === etapa;
                 return (
@@ -1119,7 +1115,7 @@ export default function FichaProyectoClient({
                     key={etapa}
                     type="button"
                     onClick={() => seleccionarEtapa(etapa)}
-                    className={`text-left p-4 rounded-xl border transition-all cursor-pointer flex flex-col justify-between min-h-[96px] ${
+                    className={`text-left p-3.5 rounded-xl border transition-all cursor-pointer flex flex-col justify-between min-h-[96px] ${
                       esActual
                         ? 'bg-[#EAB308]/10 border-[#EAB308] shadow-[0_0_18px_rgba(234,179,8,0.18)]'
                         : 'bg-[#181818] border-white/10 hover:border-white/25'
@@ -1152,7 +1148,7 @@ export default function FichaProyectoClient({
             </div>
           </div>
 
-          {/* 2. DATOS PRINCIPALES + ESTADO ECONÓMICO (ARS/USD + SEMÁFORO) Y VISITAS */}
+          {/* 2. DATOS PRINCIPALES + ESTADO ECONÓMICO Y VISITAS */}
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
             <div className="lg:col-span-6 bg-[#242424] border border-white/10 rounded-2xl p-6 shadow-xl flex flex-col justify-between">
               <div>
@@ -1265,7 +1261,6 @@ export default function FichaProyectoClient({
                   </button>
                 </div>
 
-                {/* SEMÁFORO DE OBRA CON CRITERIO SELECCIONABLE */}
                 <div className={`rounded-xl border p-3 mb-3.5 ${semaforoObra.clase}`}>
                   <div className="flex flex-wrap justify-between items-center gap-2">
                     <div className="flex items-center gap-2">
@@ -2644,7 +2639,6 @@ export default function FichaProyectoClient({
                   </div>
                 </div>
 
-                {/* BLOQUE PRESUPUESTO + CERTIFICACIONES + REDETERMINACIÓN CAC */}
                 <div className="bg-[#141414] border border-gray-800 rounded-xl p-4 space-y-3">
                   <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
                     <div>
@@ -2893,7 +2887,7 @@ export default function FichaProyectoClient({
           document.body
         )}
 
-      {/* VISOR MODAL INTEGRADO (PDFs, Planos e Imágenes) */}
+      {/* VISOR MODAL INTEGRADO */}
       <VisorArchivoModal
         abierto={Boolean(visorArchivo)}
         url={visorArchivo?.url || ''}

@@ -37,10 +37,11 @@ const MONEDAS_DISPONIBLES = [
 const ETAPAS_DEFAULT = [
   'Relevamiento y Concepto',
   'Anteproyecto y Diseño',
+  'Presupuesto',
   'Proyecto Ejecutivo y Detalles',
-  'Presupuesto y Compras',
+  'Compras',
   'Dirección y Ejecución de Obra',
-  'Entrega y Post-Obra',
+  'Entrega Final',
 ];
 
 const TIPOLOGIAS_DEFAULT = [
