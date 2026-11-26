@@ -4,6 +4,7 @@ import { useState, useMemo } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { supabase } from '@/lib/supabase';
+import { moverAPapelera } from '@/lib/papelera';
 import ModalTarea from '@/components/ModalTarea';
 import {
   Plus,
@@ -22,6 +23,7 @@ import {
   Folder,
   Tag,
   RefreshCw,
+  Trash2,
 } from 'lucide-react';
 
 const COLUMNAS_KANBAN = [
@@ -112,6 +114,22 @@ export default function TareasClient({
     const actual = normalizarEstado(t.estado);
     const nuevo = actual === 'Finalizado' ? 'Por Realizar' : 'Finalizado';
     await cambiarEstadoTarea(t.id, nuevo);
+  };
+
+  const eliminarTareaRapido = async (t: any) => {
+    try {
+      await moverAPapelera({
+        tabla: 'tareas',
+        modulo: 'Tareas',
+        titulo: t.titulo || 'Tarea sin título',
+        subtitulo: t.proyecto_codigo ? `${t.proyecto_codigo} · ${t.proyecto_nombre || ''}` : '',
+        registro: t,
+      });
+      mostrarToast('Tarea enviada a papelera');
+      router.refresh();
+    } catch (err: any) {
+      alert('Error al eliminar tarea: ' + err.message);
+    }
   };
 
   const tareasBase = useMemo(() => {
@@ -640,17 +658,30 @@ export default function TareasClient({
                         </td>
 
                         <td className="py-4 px-3 text-right">
-                          <button
-                            type="button"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              setTareaEditando(t);
-                              setModalAbierto(true);
-                            }}
-                            className="px-3.5 py-1.5 rounded-xl border border-gray-700 hover:bg-gray-800 text-xs font-semibold text-white inline-flex items-center gap-1.5 cursor-pointer"
-                          >
-                            Más info <ArrowRight className="w-3.5 h-3.5" />
-                          </button>
+                          <div className="inline-flex items-center gap-1.5">
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setTareaEditando(t);
+                                setModalAbierto(true);
+                              }}
+                              className="px-3.5 py-1.5 rounded-xl border border-gray-700 hover:bg-gray-800 text-xs font-semibold text-white inline-flex items-center gap-1.5 cursor-pointer"
+                            >
+                              Más info <ArrowRight className="w-3.5 h-3.5" />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                eliminarTareaRapido(t);
+                              }}
+                              title="Enviar a papelera"
+                              className="p-1.5 rounded-xl border border-gray-800 hover:border-rose-500/40 hover:bg-rose-500/15 text-gray-400 hover:text-rose-400 transition-colors cursor-pointer"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
                         </td>
                       </tr>
                     );
@@ -747,21 +778,34 @@ export default function TareasClient({
                             setTareaEditando(t);
                             setModalAbierto(true);
                           }}
-                          className="bg-[#121212] border border-gray-800 hover:border-gray-700 rounded-xl p-3.5 space-y-2.5 cursor-pointer transition-colors"
+                          className="group bg-[#121212] border border-gray-800 hover:border-gray-700 rounded-xl p-3.5 space-y-2.5 cursor-pointer transition-colors"
                         >
                           <div className="flex items-start justify-between gap-2">
                             <div className="text-xs font-bold text-white leading-snug">
                               {t.titulo}
                             </div>
-                            <span
-                              className={`px-2 py-0.5 rounded text-[10px] font-bold flex-shrink-0 border ${
-                                t.prioridad === 'Alta'
-                                  ? 'bg-amber-950/80 border-amber-700/60 text-[#EAB308]'
-                                  : 'bg-cyan-950/70 border-cyan-800/60 text-cyan-300'
-                              }`}
-                            >
-                              {t.prioridad || 'Media'}
-                            </span>
+                            <div className="flex items-center gap-1 flex-shrink-0">
+                              <span
+                                className={`px-2 py-0.5 rounded text-[10px] font-bold border ${
+                                  t.prioridad === 'Alta'
+                                    ? 'bg-amber-950/80 border-amber-700/60 text-[#EAB308]'
+                                    : 'bg-cyan-950/70 border-cyan-800/60 text-cyan-300'
+                                }`}
+                              >
+                                {t.prioridad || 'Media'}
+                              </span>
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  eliminarTareaRapido(t);
+                                }}
+                                title="Enviar a papelera"
+                                className="opacity-0 group-hover:opacity-100 p-1 rounded hover:bg-rose-500/15 text-gray-400 hover:text-rose-400 transition-all cursor-pointer"
+                              >
+                                <Trash2 className="w-3 h-3" />
+                              </button>
+                            </div>
                           </div>
 
                           {t.rubro && (

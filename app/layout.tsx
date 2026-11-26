@@ -5,6 +5,7 @@ import Sidebar from '@/components/Sidebar';
 import Topbar from '@/components/Topbar';
 import FondoGlobalApp from '@/components/FondoGlobalApp';
 import AuthGate from '@/components/AuthGate';
+import AgenteNexaWidget from '@/components/AgenteNexaWidget';
 import { PreferenciasProvider } from '@/components/PreferenciasProvider';
 
 const inter = Inter({ subsets: ['latin'] });
@@ -43,6 +44,7 @@ export default function RootLayout({
                 <main className="flex-1">{children}</main>
               </div>
             </div>
+            <AgenteNexaWidget />
           </AuthGate>
         </PreferenciasProvider>
       </body>

@@ -4,6 +4,7 @@ import { useState, useMemo, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { useRouter } from 'next/navigation';
 import { supabase } from '@/lib/supabase';
+import { moverAPapelera } from '@/lib/papelera';
 import ModalVisita, {
   reproducirSonidoAlarmaVisita,
   lanzarNotificacionSistema,
@@ -19,6 +20,7 @@ import {
   SlidersHorizontal,
   Bell,
   X,
+  Trash2,
 } from 'lucide-react';
 
 const MESES_LARGO = [
@@ -96,6 +98,40 @@ export default function AgendaClient({
     setTimeout(() => setToast(null), 3200);
   };
 
+  const eliminarVisitaRapido = async (v: any) => {
+    try {
+      await moverAPapelera({
+        tabla: 'visitas',
+        modulo: 'Visitas y Agenda',
+        titulo: v.titulo || v.motivo || 'Visita de obra',
+        subtitulo: v.proyecto_codigo ? `${v.proyecto_codigo} · ${v.proyecto_nombre || ''}` : '',
+        registro: v,
+      });
+      setVisitas((prev) => prev.filter((item) => item.id !== v.id));
+      mostrarToast('Visita enviada a papelera');
+      router.refresh();
+    } catch (err: any) {
+      alert('Error al eliminar visita: ' + err.message);
+    }
+  };
+
+  const eliminarTareaRapido = async (t: any) => {
+    try {
+      await moverAPapelera({
+        tabla: 'tareas',
+        modulo: 'Tareas',
+        titulo: t.titulo || 'Tarea sin título',
+        subtitulo: t.proyecto_codigo ? `${t.proyecto_codigo} · ${t.proyecto_nombre || ''}` : '',
+        registro: t,
+      });
+      setTareas((prev) => prev.filter((item) => item.id !== t.id));
+      mostrarToast('Tarea enviada a papelera');
+      router.refresh();
+    } catch (err: any) {
+      alert('Error al eliminar tarea: ' + err.message);
+    }
+  };
+
   // Monitor en tiempo real de alarmas de Visitas y Agenda
   useEffect(() => {
     const revisarAlarmas = () => {
@@ -129,7 +165,7 @@ export default function AgendaClient({
     return () => clearInterval(timer);
   }, [visitas]);
 
-  // Bucle sonoro continuo + notificación de Windows por encima de cualquier ventana
+  // Bucle sonoro continuo + notificación de Windows
   useEffect(() => {
     if (!alarmaSonando) return;
 
@@ -563,16 +599,32 @@ export default function AgendaClient({
                                 setModalTarea(true);
                               }
                             }}
-                            className={`rounded-lg border px-2 py-1 text-[10px] leading-tight ${estiloCard}`}
+                            className={`group rounded-lg border px-2 py-1 text-[10px] leading-tight ${estiloCard}`}
                           >
                             <div className="font-bold opacity-85 flex items-center justify-between gap-1">
                               <span className="truncate">
                                 {ev.hora ? `${ev.hora} · ` : ''}
                                 {ev.subtitulo}
                               </span>
-                              {ev.alarma_activa && (
-                                <Bell className="w-2.5 h-2.5 text-[#EAB308] flex-shrink-0" />
-                              )}
+                              <div className="flex items-center gap-1 flex-shrink-0">
+                                {ev.alarma_activa && (
+                                  <Bell className="w-2.5 h-2.5 text-[#EAB308]" />
+                                )}
+                                {(ev.clase === 'Visita' || ev.clase === 'Tarea') && (
+                                  <button
+                                    type="button"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      if (ev.clase === 'Visita') eliminarVisitaRapido(ev.raw);
+                                      else eliminarTareaRapido(ev.raw);
+                                    }}
+                                    title="Enviar a papelera"
+                                    className="opacity-0 group-hover:opacity-100 hover:text-rose-400 transition-opacity p-0.5 rounded cursor-pointer"
+                                  >
+                                    <Trash2 className="w-2.5 h-2.5" />
+                                  </button>
+                                )}
+                              </div>
                             </div>
                             <div className="font-extrabold text-white truncate mt-0.5">
                               {ev.titulo}
@@ -625,9 +677,22 @@ export default function AgendaClient({
                     {v.proyecto_codigo || 'General'} {v.responsable ? `· ${v.responsable}` : ''}
                   </div>
                 </div>
-                <span className="px-3 py-1 rounded-full bg-amber-950/70 border border-amber-700/50 text-[#EAB308] text-xs font-bold">
-                  {v.estado || 'Programada'}
-                </span>
+                <div className="flex items-center gap-2">
+                  <span className="px-3 py-1 rounded-full bg-amber-950/70 border border-amber-700/50 text-[#EAB308] text-xs font-bold">
+                    {v.estado || 'Programada'}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      eliminarVisitaRapido(v);
+                    }}
+                    title="Enviar a papelera"
+                    className="p-2 rounded-xl border border-white/10 hover:border-rose-500/40 hover:bg-rose-500/15 text-gray-400 hover:text-rose-400 transition-colors cursor-pointer"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                  </button>
+                </div>
               </div>
             ))
           )}
@@ -656,9 +721,22 @@ export default function AgendaClient({
                     {formatearFechaCorta(v.fecha)} · {v.proyecto_codigo || 'General'}
                   </div>
                 </div>
-                <span className="px-3 py-1 rounded-full bg-emerald-950/70 border border-emerald-700/50 text-emerald-400 text-xs font-bold">
-                  Realizada
-                </span>
+                <div className="flex items-center gap-2">
+                  <span className="px-3 py-1 rounded-full bg-emerald-950/70 border border-emerald-700/50 text-emerald-400 text-xs font-bold">
+                    Realizada
+                  </span>
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      eliminarVisitaRapido(v);
+                    }}
+                    title="Enviar a papelera"
+                    className="p-2 rounded-xl border border-white/10 hover:border-rose-500/40 hover:bg-rose-500/15 text-gray-400 hover:text-rose-400 transition-colors cursor-pointer"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                  </button>
+                </div>
               </div>
             ))
           )}
