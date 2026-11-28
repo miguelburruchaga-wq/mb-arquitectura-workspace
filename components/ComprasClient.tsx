@@ -3,6 +3,7 @@
 import { useState, useMemo, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { useRouter } from 'next/navigation';
+import { supabase } from '@/lib/supabase';
 import { moverAPapelera } from '@/lib/papelera';
 import ModalCompraPedido from '@/components/ModalCompraPedido';
 import VisorArchivoModal from '@/components/VisorArchivoModal';
@@ -14,6 +15,10 @@ import {
   List,
   PieChart,
   CheckCircle2,
+  ChevronDown,
+  ChevronRight,
+  X,
+  Loader2,
 } from 'lucide-react';
 
 const COLORES_TORTA = [
@@ -50,6 +55,9 @@ const NOMBRES_MESES: Record<string, string> = {
   '12': 'Diciembre',
 };
 
+const COLUMNAS_COMPRAS_LIVIANAS =
+  'id, proyecto_codigo, proyecto_nombre, proveedor, cuit, concepto, nro_orden, tipo_comprobante, fecha, moneda, importe, valor_usd, importe_usd, estado, notas, created_at';
+
 export default function ComprasClient({
   comprasIniciales = [],
   proyectos = [],
@@ -62,8 +70,11 @@ export default function ComprasClient({
   const router = useRouter();
   const [montado, setMontado] = useState(false);
   const [compras, setCompras] = useState<any[]>(comprasIniciales);
+  const [listaProyectos, setListaProyectos] = useState<any[]>(proyectos);
+  const [listaProveedores, setListaProveedores] = useState<any[]>(proveedores);
 
   const [vista, setVista] = useState<'listado' | 'proveedores'>('listado');
+  const [proveedorExpandido, setProveedorExpandido] = useState<string | null>(null);
   const [busqueda, setBusqueda] = useState('');
   const [filtroProyecto, setFiltroProyecto] = useState('Todas');
   const [filtroEstado, setFiltroEstado] = useState('Todos');
@@ -71,23 +82,96 @@ export default function ComprasClient({
 
   const [modalCompra, setModalCompra] = useState(false);
   const [compraEditando, setCompraEditando] = useState<any | null>(null);
+  const [cargandoPdfId, setCargandoPdfId] = useState<string | number | null>(null);
   const [visorArchivo, setVisorArchivo] = useState<{ url: string; titulo: string } | null>(null);
   const [toast, setToast] = useState<string | null>(null);
 
+  const recargarSoloComprasLivianas = async () => {
+    const { data: compData } = await supabase
+      .from('compras')
+      .select(COLUMNAS_COMPRAS_LIVIANAS)
+      .order('fecha', { ascending: false })
+      .order('created_at', { ascending: false });
+    if (Array.isArray(compData)) setCompras(compData);
+  };
+
   useEffect(() => {
     setMontado(true);
+    // Solo consultar en cliente si el servidor no entregó registros
+    if (!comprasIniciales || comprasIniciales.length === 0) {
+      recargarSoloComprasLivianas();
+    }
   }, []);
 
   useEffect(() => {
     setCompras(comprasIniciales);
   }, [comprasIniciales]);
 
+  useEffect(() => {
+    if (Array.isArray(proyectos) && proyectos.length > 0) setListaProyectos(proyectos);
+  }, [proyectos]);
+
+  useEffect(() => {
+    if (Array.isArray(proveedores) && proveedores.length > 0) setListaProveedores(proveedores);
+  }, [proveedores]);
+
   const mostrarToast = (msg: string) => {
     setToast(msg);
     setTimeout(() => setToast(null), 3200);
   };
 
-  // Opciones dinámicas de Mes / Año extraídas de las compras cargadas (ej. "2026-11" -> "Noviembre 2026")
+  // Cargar archivo_url bajo demanda (solo al abrir PDF o editar una compra)
+  const abrirPdfBajoDemanda = async (e: React.MouseEvent, item: any) => {
+    e.stopPropagation();
+    if (item.archivo_url) {
+      setVisorArchivo({
+        url: item.archivo_url,
+        titulo: `${item.proveedor || 'Factura'} · ${item.nro_orden || item.concepto}`,
+      });
+      return;
+    }
+
+    setCargandoPdfId(item.id);
+    try {
+      const { data } = await supabase
+        .from('compras')
+        .select('archivo_url')
+        .eq('id', item.id)
+        .maybeSingle();
+
+      if (data?.archivo_url) {
+        setCompras((prev) =>
+          prev.map((c) => (c.id === item.id ? { ...c, archivo_url: data.archivo_url } : c))
+        );
+        setVisorArchivo({
+          url: data.archivo_url,
+          titulo: `${item.proveedor || 'Factura'} · ${item.nro_orden || item.concepto}`,
+        });
+      } else {
+        mostrarToast('Esta compra no tiene archivo PDF adjunto');
+      }
+    } finally {
+      setCargandoPdfId(null);
+    }
+  };
+
+  const abrirEdicionCompra = async (item: any) => {
+    setCompraEditando(item);
+    setModalCompra(true);
+    if (!item.archivo_url && item.id) {
+      const { data } = await supabase
+        .from('compras')
+        .select('archivo_url')
+        .eq('id', item.id)
+        .maybeSingle();
+      if (data?.archivo_url) {
+        setCompraEditando((prev: any) =>
+          prev && prev.id === item.id ? { ...prev, archivo_url: data.archivo_url } : prev
+        );
+      }
+    }
+  };
+
   const opcionesMesAnio = useMemo(() => {
     const setPeriodos = new Set<string>();
     for (const c of compras) {
@@ -110,12 +194,18 @@ export default function ComprasClient({
   const eliminarCompraDirecto = async (e: React.MouseEvent, item: any) => {
     e.stopPropagation();
     try {
+      const { data: fullRow } = await supabase
+        .from('compras')
+        .select('*')
+        .eq('id', item.id)
+        .maybeSingle();
+
       await moverAPapelera({
         tabla: 'compras',
         modulo: 'Compras y Pedidos',
         titulo: `${item.proveedor || 'Proveedor'} · ${item.concepto || ''}`,
         subtitulo: item.nro_orden || '',
-        registro: item,
+        registro: fullRow || item,
       });
       setCompras((prev) => prev.filter((c) => c.id !== item.id));
       mostrarToast('Compra enviada a papelera');
@@ -145,50 +235,65 @@ export default function ComprasClient({
 
   const totalUsdFiltrado = useMemo(() => {
     return comprasFiltradas.reduce((acc, c) => {
+      const signo = c.tipo_comprobante === 'Nota de Crédito' ? -1 : 1;
       const usd =
         String(c.moneda || '').toUpperCase() === 'USD'
           ? Number(c.importe || 0)
           : Number(c.importe_usd || 0);
-      return acc + usd;
+      return acc + signo * usd;
     }, 0);
   }, [comprasFiltradas]);
 
-  // Agrupación de compras por Proveedor (Neto ARS, Neto USD y % participación para el gráfico circular)
   const resumenPorProveedor = useMemo(() => {
     const mapa = new Map<
       string,
-      { proveedor: string; netoArs: number; netoUsd: number; cantidadPedidos: number }
+      {
+        proveedor: string;
+        netoArs: number;
+        netoUsd: number;
+        cantidadPedidos: number;
+        comprasLista: any[];
+      }
     >();
 
     for (const c of comprasFiltradas) {
       const nombre = String(c.proveedor || 'Sin proveedor').trim();
+      const signo = c.tipo_comprobante === 'Nota de Crédito' ? -1 : 1;
       const mon = String(c.moneda || 'ARS').toUpperCase();
       const imp = Number(c.importe || 0);
       const cot = Number(c.valor_usd || 1450) || 1450;
-      const ars = mon === 'ARS' ? imp : imp * cot;
-      const usd = mon === 'USD' ? imp : Number(c.importe_usd || imp / cot);
+      const ars = signo * (mon === 'ARS' ? imp : imp * cot);
+      const usd = signo * (mon === 'USD' ? imp : Number(c.importe_usd || imp / cot));
 
       const actual = mapa.get(nombre) || {
         proveedor: nombre,
         netoArs: 0,
         netoUsd: 0,
         cantidadPedidos: 0,
+        comprasLista: [],
       };
       actual.netoArs += ars;
       actual.netoUsd += usd;
       actual.cantidadPedidos += 1;
+      actual.comprasLista.push(c);
       mapa.set(nombre, actual);
     }
 
     const lista = Array.from(mapa.values()).sort((a, b) => b.netoUsd - a.netoUsd);
-    const totalUsd = lista.reduce((acc, i) => acc + i.netoUsd, 0);
+    const totalUsdPositivo = lista.reduce((acc, i) => acc + Math.max(0, i.netoUsd), 0);
 
     return lista.map((item, idx) => ({
       ...item,
-      porcentaje: totalUsd > 0 ? (item.netoUsd / totalUsd) * 100 : 0,
+      porcentaje:
+        totalUsdPositivo > 0 ? (Math.max(0, item.netoUsd) / totalUsdPositivo) * 100 : 0,
       color: COLORES_TORTA[idx % COLORES_TORTA.length],
     }));
   }, [comprasFiltradas]);
+
+  const proveedorSeleccionadoObj = useMemo(
+    () => resumenPorProveedor.find((r) => r.proveedor === proveedorExpandido) || null,
+    [resumenPorProveedor, proveedorExpandido]
+  );
 
   const totalArsProveedores = useMemo(
     () => resumenPorProveedor.reduce((acc, r) => acc + r.netoArs, 0),
@@ -229,7 +334,7 @@ export default function ComprasClient({
         </button>
       </div>
 
-      {/* SELECTOR DE VISTA: LISTADO VS RESUMEN POR PROVEEDOR */}
+      {/* SELECTOR DE VISTA */}
       <div className="flex flex-wrap justify-between items-center gap-4 mb-5">
         <div className="bg-[#242424] border border-white/10 rounded-xl p-1 inline-flex gap-1">
           <button
@@ -255,7 +360,7 @@ export default function ComprasClient({
         </div>
       </div>
 
-      {/* FILTROS (BUSCADOR + MES/AÑO + OBRA + ESTADO + TOTAL USD) */}
+      {/* FILTROS */}
       <div className="bg-[#242424] border border-white/10 rounded-2xl p-4 mb-6 flex flex-wrap items-center gap-3">
         <div className="relative flex-1 min-w-[200px]">
           <Search className="w-4 h-4 text-gray-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
@@ -287,7 +392,7 @@ export default function ComprasClient({
           className="bg-[#181818] border border-white/10 rounded-xl px-3 py-2 text-xs font-semibold text-white cursor-pointer"
         >
           <option value="Todas">Obra: Todas</option>
-          {proyectos.map((p) => (
+          {listaProyectos.map((p) => (
             <option key={p.codigo} value={p.codigo}>
               {p.codigo} · {p.nombre}
             </option>
@@ -318,7 +423,7 @@ export default function ComprasClient({
         </div>
       </div>
 
-      {/* VISTA 1: LISTADO CON PAPELERA ROJA A LA DERECHA DE PDF */}
+      {/* VISTA 1: LISTADO */}
       {vista === 'listado' && (
         <div className="bg-[#242424] border border-white/10 rounded-2xl p-6 shadow-xl">
           <h2 className="text-sm font-extrabold text-white mb-4">
@@ -346,98 +451,109 @@ export default function ComprasClient({
                     </td>
                   </tr>
                 ) : (
-                  comprasFiltradas.map((c) => (
-                    <tr
-                      key={c.id}
-                      onClick={() => {
-                        setCompraEditando(c);
-                        setModalCompra(true);
-                      }}
-                      className="hover:bg-white/5 transition-colors cursor-pointer"
-                    >
-                      <td className="py-3.5 px-3">
-                        <div className="font-bold text-white">{c.fecha || '—'}</div>
-                        <div className="text-[11px] text-gray-400">{c.nro_orden || '—'}</div>
-                      </td>
-
-                      <td className="py-3.5 px-3">
-                        {c.proyecto_codigo ? (
-                          <div>
-                            <span className="bg-[#EAB308]/15 border border-[#EAB308]/40 text-[#EAB308] px-2 py-0.5 rounded text-[10px] font-extrabold">
-                              {c.proyecto_codigo}
-                            </span>
-                            <div className="text-[11px] text-gray-300 mt-0.5">
-                              {c.proyecto_nombre || ''}
-                            </div>
+                  comprasFiltradas.map((c) => {
+                    const esNc = c.tipo_comprobante === 'Nota de Crédito';
+                    return (
+                      <tr
+                        key={c.id}
+                        onClick={() => abrirEdicionCompra(c)}
+                        className="hover:bg-white/5 transition-colors cursor-pointer"
+                      >
+                        <td className="py-3.5 px-3">
+                          <div className="font-bold text-white">{c.fecha || '—'}</div>
+                          <div className="text-[11px] text-gray-400 flex items-center gap-1.5">
+                            <span>{c.nro_orden || '—'}</span>
+                            {esNc && (
+                              <span className="px-1.5 py-0.2 rounded bg-emerald-950/80 border border-emerald-700/50 text-emerald-400 text-[9px] font-extrabold">
+                                NC
+                              </span>
+                            )}
                           </div>
-                        ) : (
-                          <span className="text-gray-400">General</span>
-                        )}
-                      </td>
+                        </td>
 
-                      <td className="py-3.5 px-3">
-                        <div className="font-bold text-white">{c.proveedor}</div>
-                        <div className="text-[11px] text-gray-400">{c.concepto}</div>
-                      </td>
+                        <td className="py-3.5 px-3">
+                          {c.proyecto_codigo ? (
+                            <div>
+                              <span className="bg-[#EAB308]/15 border border-[#EAB308]/40 text-[#EAB308] px-2 py-0.5 rounded text-[10px] font-extrabold">
+                                {c.proyecto_codigo}
+                              </span>
+                              <div className="text-[11px] text-gray-300 mt-0.5">
+                                {c.proyecto_nombre || ''}
+                              </div>
+                            </div>
+                          ) : (
+                            <span className="text-gray-400">General</span>
+                          )}
+                        </td>
 
-                      <td className="py-3.5 px-3 font-extrabold text-white">
-                        {String(c.moneda || 'ARS').toUpperCase() === 'USD' ? 'USD $ ' : '$ '}
-                        {Number(c.importe || 0).toLocaleString('es-AR', {
-                          minimumFractionDigits: 2,
-                          maximumFractionDigits: 2,
-                        })}
-                      </td>
+                        <td className="py-3.5 px-3">
+                          <div className="font-bold text-white">{c.proveedor}</div>
+                          <div className="text-[11px] text-gray-400">{c.concepto}</div>
+                        </td>
 
-                      <td className="py-3.5 px-3 font-extrabold text-[#EAB308]">
-                        USD $
-                        {Number(
-                          String(c.moneda || '').toUpperCase() === 'USD'
-                            ? c.importe || 0
-                            : c.importe_usd || 0
-                        ).toLocaleString('es-AR', {
-                          minimumFractionDigits: 2,
-                          maximumFractionDigits: 2,
-                        })}
-                      </td>
+                        <td
+                          className={`py-3.5 px-3 font-extrabold ${
+                            esNc ? 'text-emerald-400' : 'text-white'
+                          }`}
+                        >
+                          {esNc ? '-' : ''}
+                          {String(c.moneda || 'ARS').toUpperCase() === 'USD' ? 'USD $ ' : '$ '}
+                          {Number(c.importe || 0).toLocaleString('es-AR', {
+                            minimumFractionDigits: 2,
+                            maximumFractionDigits: 2,
+                          })}
+                        </td>
 
-                      <td className="py-3.5 px-3">
-                        <span className="px-2.5 py-1 rounded-full bg-gray-800 text-gray-200 font-semibold text-[11px]">
-                          {c.estado}
-                        </span>
-                      </td>
+                        <td
+                          className={`py-3.5 px-3 font-extrabold ${
+                            esNc ? 'text-emerald-400' : 'text-[#EAB308]'
+                          }`}
+                        >
+                          {esNc ? '-' : ''}USD $
+                          {Number(
+                            String(c.moneda || '').toUpperCase() === 'USD'
+                              ? c.importe || 0
+                              : c.importe_usd || 0
+                          ).toLocaleString('es-AR', {
+                            minimumFractionDigits: 2,
+                            maximumFractionDigits: 2,
+                          })}
+                        </td>
 
-                      <td className="py-3.5 px-3 text-right">
-                        <div className="inline-flex items-center justify-end gap-2">
-                          {c.archivo_url && (
+                        <td className="py-3.5 px-3">
+                          <span className="px-2.5 py-1 rounded-full bg-gray-800 text-gray-200 font-semibold text-[11px]">
+                            {c.estado}
+                          </span>
+                        </td>
+
+                        <td className="py-3.5 px-3 text-right">
+                          <div className="inline-flex items-center justify-end gap-2">
                             <button
                               type="button"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                setVisorArchivo({
-                                  url: c.archivo_url,
-                                  titulo: `${c.proveedor || 'Factura'} · ${
-                                    c.nro_orden || c.concepto
-                                  }`,
-                                });
-                              }}
+                              onClick={(e) => abrirPdfBajoDemanda(e, c)}
                               className="px-2.5 py-1 rounded-lg bg-blue-500/15 border border-blue-500/40 text-blue-400 hover:bg-blue-500/25 font-bold inline-flex items-center gap-1 cursor-pointer"
                             >
-                              <FileText className="w-3.5 h-3.5" /> PDF
+                              {cargandoPdfId === c.id ? (
+                                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                              ) : (
+                                <FileText className="w-3.5 h-3.5" />
+                              )}
+                              PDF
                             </button>
-                          )}
 
-                          <button
-                            type="button"
-                            onClick={(e) => eliminarCompraDirecto(e, c)}
-                            title="Eliminar compra (enviar a papelera)"
-                            className="p-1.5 rounded-lg bg-rose-500/15 border border-rose-500/40 text-rose-400 hover:bg-rose-500/30 transition-colors cursor-pointer"
-                          >
-                            <Trash2 className="w-3.5 h-3.5" />
-                          </button>
-                        </div>
-                      </td>
-                    </tr>
-                  ))
+                            <button
+                              type="button"
+                              onClick={(e) => eliminarCompraDirecto(e, c)}
+                              title="Eliminar compra (enviar a papelera)"
+                              className="p-1.5 rounded-lg bg-rose-500/15 border border-rose-500/40 text-rose-400 hover:bg-rose-500/30 transition-colors cursor-pointer"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })
                 )}
               </tbody>
             </table>
@@ -445,128 +561,322 @@ export default function ComprasClient({
         </div>
       )}
 
-      {/* VISTA 2: RESUMEN POR PROVEEDOR */}
+      {/* VISTA 2: RESUMEN POR PROVEEDOR CON DESPLIEGUE DE COMPRAS AL HACER CLIC */}
       {vista === 'proveedores' && (
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-          <div className="lg:col-span-6 bg-[#242424] border border-white/10 rounded-2xl overflow-hidden shadow-xl">
-            <div className="px-5 py-4 border-b border-white/10 flex justify-between items-center">
-              <h2 className="text-sm font-extrabold text-white">
-                Totales por Proveedor ({resumenPorProveedor.length})
-              </h2>
-              <span className="text-[11px] text-gray-400">Neto ARS y Equivalente USD</span>
-            </div>
+        <div className="space-y-6">
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+            <div className="lg:col-span-6 bg-[#242424] border border-white/10 rounded-2xl overflow-hidden shadow-xl">
+              <div className="px-5 py-4 border-b border-white/10 flex justify-between items-center">
+                <h2 className="text-sm font-extrabold text-white">
+                  Totales por Proveedor ({resumenPorProveedor.length})
+                </h2>
+                <span className="text-[11px] text-gray-400">
+                  Tocá un proveedor para desplegar sus compras
+                </span>
+              </div>
 
-            <div className="overflow-x-auto">
-              <table className="w-full text-left border-collapse text-xs">
-                <thead>
-                  <tr className="bg-[#181818] border-b border-white/10 text-[11px] font-bold uppercase text-gray-300">
-                    <th className="py-3 px-4">PROVEEDOR</th>
-                    <th className="py-3 px-4 text-right">NETO</th>
-                    <th className="py-3 px-4 text-right">NETO USD</th>
-                    <th className="py-3 px-3 text-right">%</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-white/10">
-                  {resumenPorProveedor.length === 0 ? (
-                    <tr>
-                      <td colSpan={4} className="py-8 text-center text-gray-400">
-                        Sin datos de compras para agrupar.
-                      </td>
+              <div className="overflow-x-auto">
+                <table className="w-full text-left border-collapse text-xs">
+                  <thead>
+                    <tr className="bg-[#181818] border-b border-white/10 text-[11px] font-bold uppercase text-gray-300">
+                      <th className="py-3 px-4">PROVEEDOR</th>
+                      <th className="py-3 px-4 text-right">NETO</th>
+                      <th className="py-3 px-4 text-right">NETO USD</th>
+                      <th className="py-3 px-3 text-right">%</th>
                     </tr>
-                  ) : (
-                    resumenPorProveedor.map((row) => (
-                      <tr key={row.proveedor} className="hover:bg-white/5">
-                        <td className="py-2.5 px-4 font-bold text-white flex items-center gap-2">
-                          <span
-                            className="w-2.5 h-2.5 rounded-full flex-shrink-0"
-                            style={{ backgroundColor: row.color }}
-                          />
-                          <span className="truncate">{row.proveedor}</span>
-                        </td>
-                        <td className="py-2.5 px-4 text-right font-semibold text-gray-200">
-                          ${' '}
-                          {row.netoArs.toLocaleString('es-AR', {
-                            minimumFractionDigits: 2,
-                            maximumFractionDigits: 2,
-                          })}
-                        </td>
-                        <td className="py-2.5 px-4 text-right font-extrabold text-[#EAB308]">
-                          USD $
-                          {row.netoUsd.toLocaleString('es-AR', {
-                            minimumFractionDigits: 2,
-                            maximumFractionDigits: 2,
-                          })}
-                        </td>
-                        <td className="py-2.5 px-3 text-right text-gray-400 font-bold">
-                          {row.porcentaje.toFixed(1)}%
+                  </thead>
+                  <tbody className="divide-y divide-white/10">
+                    {resumenPorProveedor.length === 0 ? (
+                      <tr>
+                        <td colSpan={4} className="py-8 text-center text-gray-400">
+                          Sin datos de compras para agrupar.
                         </td>
                       </tr>
-                    ))
+                    ) : (
+                      resumenPorProveedor.map((row) => {
+                        const activo = proveedorExpandido === row.proveedor;
+                        return (
+                          <tr
+                            key={row.proveedor}
+                            onClick={() =>
+                              setProveedorExpandido((prev) =>
+                                prev === row.proveedor ? null : row.proveedor
+                              )
+                            }
+                            className={`transition-colors cursor-pointer ${
+                              activo ? 'bg-[#EAB308]/10' : 'hover:bg-white/5'
+                            }`}
+                          >
+                            <td className="py-2.5 px-4 font-bold text-white flex items-center gap-2 cursor-pointer">
+                              {activo ? (
+                                <ChevronDown className="w-3.5 h-3.5 text-[#EAB308] flex-shrink-0" />
+                              ) : (
+                                <ChevronRight className="w-3.5 h-3.5 text-gray-400 flex-shrink-0" />
+                              )}
+                              <span
+                                className="w-2.5 h-2.5 rounded-full flex-shrink-0"
+                                style={{ backgroundColor: row.color }}
+                              />
+                              <span className="truncate">{row.proveedor}</span>
+                            </td>
+                            <td className="py-2.5 px-4 text-right font-semibold text-gray-200 cursor-pointer">
+                              ${' '}
+                              {row.netoArs.toLocaleString('es-AR', {
+                                minimumFractionDigits: 2,
+                                maximumFractionDigits: 2,
+                              })}
+                            </td>
+                            <td className="py-2.5 px-4 text-right font-extrabold text-[#EAB308] cursor-pointer">
+                              USD $
+                              {row.netoUsd.toLocaleString('es-AR', {
+                                minimumFractionDigits: 2,
+                                maximumFractionDigits: 2,
+                              })}
+                            </td>
+                            <td className="py-2.5 px-3 text-right text-gray-400 font-bold cursor-pointer">
+                              {row.porcentaje.toFixed(1)}%
+                            </td>
+                          </tr>
+                        );
+                      })
+                    )}
+                  </tbody>
+                  {resumenPorProveedor.length > 0 && (
+                    <tfoot>
+                      <tr className="bg-[#181818] border-t border-white/15 font-extrabold text-xs">
+                        <td className="py-3 px-4 text-white">TOTAL GENERAL</td>
+                        <td className="py-3 px-4 text-right text-white">
+                          ${' '}
+                          {totalArsProveedores.toLocaleString('es-AR', {
+                            minimumFractionDigits: 2,
+                            maximumFractionDigits: 2,
+                          })}
+                        </td>
+                        <td className="py-3 px-4 text-right text-emerald-400">
+                          USD $
+                          {totalUsdFiltrado.toLocaleString('es-AR', {
+                            minimumFractionDigits: 2,
+                            maximumFractionDigits: 2,
+                          })}
+                        </td>
+                        <td className="py-3 px-3 text-right text-white">100%</td>
+                      </tr>
+                    </tfoot>
                   )}
-                </tbody>
-                {resumenPorProveedor.length > 0 && (
-                  <tfoot>
-                    <tr className="bg-[#181818] border-t border-white/15 font-extrabold text-xs">
-                      <td className="py-3 px-4 text-white">TOTAL GENERAL</td>
-                      <td className="py-3 px-4 text-right text-white">
-                        ${' '}
-                        {totalArsProveedores.toLocaleString('es-AR', {
-                          minimumFractionDigits: 2,
-                          maximumFractionDigits: 2,
-                        })}
-                      </td>
-                      <td className="py-3 px-4 text-right text-emerald-400">
-                        USD $
-                        {totalUsdFiltrado.toLocaleString('es-AR', {
-                          minimumFractionDigits: 2,
-                          maximumFractionDigits: 2,
-                        })}
-                      </td>
-                      <td className="py-3 px-3 text-right text-white">100%</td>
-                    </tr>
-                  </tfoot>
-                )}
-              </table>
-            </div>
-          </div>
-
-          <div className="lg:col-span-6 bg-[#242424] border border-white/10 rounded-2xl p-6 shadow-xl flex flex-col justify-between">
-            <div>
-              <h2 className="text-sm font-extrabold text-white">
-                Participación de Compras por Proveedor (%)
-              </h2>
-              <p className="text-xs text-gray-400 mt-0.5">
-                Distribución porcentual sobre el total invertido en USD
-              </p>
+                </table>
+              </div>
             </div>
 
-            <div className="my-6 flex flex-col items-center justify-center">
-              <div
-                className="w-64 h-64 rounded-full shadow-2xl border-4 border-[#181818] transition-all"
-                style={{ background: conicGradientTorta }}
-              />
-            </div>
+            <div className="lg:col-span-6 bg-[#242424] border border-white/10 rounded-2xl p-6 shadow-xl flex flex-col justify-between">
+              <div>
+                <h2 className="text-sm font-extrabold text-white">
+                  Participación de Compras por Proveedor (%)
+                </h2>
+                <p className="text-xs text-gray-400 mt-0.5">
+                  Distribución porcentual sobre el total invertido en USD
+                </p>
+              </div>
 
-            <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 pt-4 border-t border-white/10 max-h-48 overflow-y-auto">
-              {resumenPorProveedor.map((item) => (
+              <div className="my-6 flex flex-col items-center justify-center">
                 <div
-                  key={item.proveedor}
-                  className="flex items-center justify-between gap-2 bg-[#181818] border border-white/10 rounded-lg px-2.5 py-1.5 text-[11px]"
-                >
-                  <span className="inline-flex items-center gap-1.5 truncate text-gray-200 font-semibold">
-                    <span
-                      className="w-2.5 h-2.5 rounded-full flex-shrink-0"
-                      style={{ backgroundColor: item.color }}
-                    />
-                    <span className="truncate">{item.proveedor}</span>
-                  </span>
-                  <span className="font-extrabold text-white flex-shrink-0">
-                    {item.porcentaje.toFixed(1)}%
-                  </span>
-                </div>
-              ))}
+                  className="w-64 h-64 rounded-full shadow-2xl border-4 border-[#181818] transition-all"
+                  style={{ background: conicGradientTorta }}
+                />
+              </div>
+
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 pt-4 border-t border-white/10 max-h-48 overflow-y-auto">
+                {resumenPorProveedor.map((item) => {
+                  const activo = proveedorExpandido === item.proveedor;
+                  return (
+                    <button
+                      type="button"
+                      key={item.proveedor}
+                      onClick={() =>
+                        setProveedorExpandido((prev) =>
+                          prev === item.proveedor ? null : item.proveedor
+                        )
+                      }
+                      className={`flex items-center justify-between gap-2 border rounded-lg px-2.5 py-1.5 text-[11px] cursor-pointer transition-colors ${
+                        activo
+                          ? 'bg-[#EAB308]/15 border-[#EAB308]'
+                          : 'bg-[#181818] border-white/10 hover:border-white/25'
+                      }`}
+                    >
+                      <span className="inline-flex items-center gap-1.5 truncate text-gray-200 font-semibold">
+                        <span
+                          className="w-2.5 h-2.5 rounded-full flex-shrink-0"
+                          style={{ backgroundColor: item.color }}
+                        />
+                        <span className="truncate">{item.proveedor}</span>
+                      </span>
+                      <span className="font-extrabold text-white flex-shrink-0">
+                        {item.porcentaje.toFixed(1)}%
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
             </div>
           </div>
+
+          {/* DETALLE DESPLEGADO DE COMPRAS DEL PROVEEDOR SELECCIONADO */}
+          {proveedorSeleccionadoObj && (
+            <div className="bg-[#242424] border border-[#EAB308]/50 rounded-2xl p-6 shadow-xl">
+              <div className="flex flex-wrap justify-between items-center gap-3 mb-4">
+                <div>
+                  <h3 className="text-sm font-extrabold text-white flex items-center gap-2">
+                    <span
+                      className="w-3 h-3 rounded-full"
+                      style={{ backgroundColor: proveedorSeleccionadoObj.color }}
+                    />
+                    Compras realizadas a {proveedorSeleccionadoObj.proveedor} (
+                    {proveedorSeleccionadoObj.comprasLista.length})
+                  </h3>
+                  <p className="text-xs text-gray-400 mt-0.5">
+                    Total neto: ARS ${' '}
+                    {proveedorSeleccionadoObj.netoArs.toLocaleString('es-AR', {
+                      minimumFractionDigits: 2,
+                      maximumFractionDigits: 2,
+                    })}{' '}
+                    · USD $
+                    {proveedorSeleccionadoObj.netoUsd.toLocaleString('es-AR', {
+                      minimumFractionDigits: 2,
+                      maximumFractionDigits: 2,
+                    })}
+                  </p>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => setProveedorExpandido(null)}
+                  className="px-3 py-1.5 rounded-xl bg-[#181818] hover:bg-white/10 border border-white/10 text-xs font-bold text-gray-300 hover:text-white inline-flex items-center gap-1.5 cursor-pointer"
+                >
+                  <X className="w-3.5 h-3.5" /> Cerrar detalle
+                </button>
+              </div>
+
+              <div className="overflow-x-auto">
+                <table className="w-full text-left border-collapse">
+                  <thead>
+                    <tr className="border-b border-white/10 text-[11px] font-bold uppercase tracking-wider text-gray-400">
+                      <th className="py-3 px-3">FECHA / FACTURA</th>
+                      <th className="py-3 px-3">PROYECTO</th>
+                      <th className="py-3 px-3">PROVEEDOR / CONCEPTO</th>
+                      <th className="py-3 px-3">IMPORTE ORIGINAL</th>
+                      <th className="py-3 px-3">EQUIV. USD</th>
+                      <th className="py-3 px-3">ESTADO</th>
+                      <th className="py-3 px-3 text-right">COMPROBANTE</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-white/10 text-xs">
+                    {proveedorSeleccionadoObj.comprasLista.map((c: any) => {
+                      const esNc = c.tipo_comprobante === 'Nota de Crédito';
+                      return (
+                        <tr
+                          key={c.id}
+                          onClick={() => abrirEdicionCompra(c)}
+                          className="hover:bg-white/5 transition-colors cursor-pointer"
+                        >
+                          <td className="py-3.5 px-3">
+                            <div className="font-bold text-white">{c.fecha || '—'}</div>
+                            <div className="text-[11px] text-gray-400 flex items-center gap-1.5">
+                              <span>{c.nro_orden || '—'}</span>
+                              {esNc && (
+                                <span className="px-1.5 py-0.2 rounded bg-emerald-950/80 border border-emerald-700/50 text-emerald-400 text-[9px] font-extrabold">
+                                  NC
+                                </span>
+                              )}
+                            </div>
+                          </td>
+
+                          <td className="py-3.5 px-3">
+                            {c.proyecto_codigo ? (
+                              <div>
+                                <span className="bg-[#D4EE36] text-black px-2.5 py-0.5 rounded-md text-[10px] font-extrabold">
+                                  {c.proyecto_codigo}
+                                </span>
+                                <div className="text-[11px] text-gray-300 mt-0.5">
+                                  {c.proyecto_nombre || ''}
+                                </div>
+                              </div>
+                            ) : (
+                              <span className="text-gray-400">General</span>
+                            )}
+                          </td>
+
+                          <td className="py-3.5 px-3">
+                            <div className="font-bold text-white">{c.proveedor}</div>
+                            <div className="text-[11px] text-gray-400">{c.concepto}</div>
+                          </td>
+
+                          <td
+                            className={`py-3.5 px-3 font-extrabold ${
+                              esNc ? 'text-emerald-400' : 'text-white'
+                            }`}
+                          >
+                            {esNc ? '-' : ''}
+                            {String(c.moneda || 'ARS').toUpperCase() === 'USD' ? 'USD $ ' : '$ '}
+                            {Number(c.importe || 0).toLocaleString('es-AR', {
+                              minimumFractionDigits: 2,
+                              maximumFractionDigits: 2,
+                            })}
+                          </td>
+
+                          <td
+                            className={`py-3.5 px-3 font-extrabold ${
+                              esNc ? 'text-emerald-400' : 'text-[#D4EE36]'
+                            }`}
+                          >
+                            {esNc ? '-' : ''}USD $
+                            {Number(
+                              String(c.moneda || '').toUpperCase() === 'USD'
+                                ? c.importe || 0
+                                : c.importe_usd || 0
+                            ).toLocaleString('es-AR', {
+                              minimumFractionDigits: 2,
+                              maximumFractionDigits: 2,
+                            })}
+                          </td>
+
+                          <td className="py-3.5 px-3">
+                            <span className="px-3 py-1 rounded-full bg-[#1C2434] text-gray-200 font-semibold text-[11px]">
+                              {c.estado}
+                            </span>
+                          </td>
+
+                          <td className="py-3.5 px-3 text-right">
+                            <div className="inline-flex items-center justify-end gap-2">
+                              <button
+                                type="button"
+                                onClick={(e) => abrirPdfBajoDemanda(e, c)}
+                                className="px-2.5 py-1 rounded-lg bg-blue-500/15 border border-blue-500/40 text-blue-400 hover:bg-blue-500/25 font-bold inline-flex items-center gap-1 cursor-pointer"
+                              >
+                                {cargandoPdfId === c.id ? (
+                                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                                ) : (
+                                  <FileText className="w-3.5 h-3.5" />
+                                )}
+                                PDF
+                              </button>
+
+                              <button
+                                type="button"
+                                onClick={(e) => eliminarCompraDirecto(e, c)}
+                                title="Eliminar compra (enviar a papelera)"
+                                className="p-1.5 rounded-lg bg-rose-500/15 border border-rose-500/40 text-rose-400 hover:bg-rose-500/30 transition-colors cursor-pointer"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
         </div>
       )}
 
@@ -585,11 +895,12 @@ export default function ComprasClient({
         }}
         onGuardado={(msg) => {
           mostrarToast(msg);
+          recargarSoloComprasLivianas();
           router.refresh();
         }}
         compraEditando={compraEditando}
-        proyectos={proyectos}
-        proveedores={proveedores}
+        proyectos={listaProyectos}
+        proveedores={listaProveedores}
       />
 
       {toast &&

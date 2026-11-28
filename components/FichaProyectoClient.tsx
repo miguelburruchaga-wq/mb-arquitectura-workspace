@@ -116,10 +116,16 @@ export default function FichaProyectoClient({
   const [montado, setMontado] = useState(false);
 
   const [datosProyectoLocal, setDatosProyectoLocal] = useState<any>(proyecto);
+  const [movimientosLocales, setMovimientosLocales] = useState<any[]>(movimientos);
+  const [comprasLocales, setComprasLocales] = useState<any[]>(compras);
 
   const etapaNormalizadaInit = normalizarEtapaProyecto(
     proyecto.etapa_actual || proyecto.etapa
   );
+
+  const monedaInicialProyecto = (
+    String(proyecto.moneda || 'USD').toUpperCase() === 'ARS' ? 'ARS' : 'USD'
+  ) as 'USD' | 'ARS';
 
   const [pestanaActiva, setPestanaActiva] = useState<
     'resumen' | 'tareas' | 'visitas' | 'documentos' | 'compras' | 'finanzas' | 'comentarios'
@@ -134,7 +140,7 @@ export default function FichaProyectoClient({
   const [etapaActual, setEtapaActual] = useState(etapaNormalizadaInit);
   const [toast, setToast] = useState<string | null>(null);
 
-  const [monedaEconomico, setMonedaEconomico] = useState<'USD' | 'ARS'>('USD');
+  const [monedaEconomico, setMonedaEconomico] = useState<'USD' | 'ARS'>(monedaInicialProyecto);
   const [criterioSemaforo, setCriterioSemaforo] = useState<
     'avance_vs_cobrado' | 'margen_neto' | 'plazos_tareas'
   >('avance_vs_cobrado');
@@ -195,9 +201,7 @@ export default function FichaProyectoClient({
   const [editSuperficie, setEditSuperficie] = useState(
     proyecto.superficie ? String(proyecto.superficie) : ''
   );
-  const [editMoneda, setEditMoneda] = useState<'USD' | 'ARS'>(
-    String(proyecto.moneda || 'USD').toUpperCase() === 'ARS' ? 'ARS' : 'USD'
-  );
+  const [editMoneda, setEditMoneda] = useState<'USD' | 'ARS'>(monedaInicialProyecto);
   const [editPresupuesto, setEditPresupuesto] = useState(numeroAInputArg(proyecto.presupuesto));
   const [editCertificaciones, setEditCertificaciones] = useState<'Quincenales' | 'Mensuales'>(
     proyecto.certificaciones === 'Quincenales' ? 'Quincenales' : 'Mensuales'
@@ -259,6 +263,10 @@ export default function FichaProyectoClient({
 
   useEffect(() => {
     setDatosProyectoLocal(proyecto);
+    const mon = (
+      String(proyecto.moneda || 'USD').toUpperCase() === 'ARS' ? 'ARS' : 'USD'
+    ) as 'USD' | 'ARS';
+    setMonedaEconomico(mon);
     const etNorm = normalizarEtapaProyecto(proyecto.etapa_actual || proyecto.etapa);
     setEtapaActual(etNorm);
     setEstadoProyecto(
@@ -269,6 +277,14 @@ export default function FichaProyectoClient({
         : proyecto.estado || 'En Curso'
     );
   }, [proyecto]);
+
+  useEffect(() => {
+    setMovimientosLocales(movimientos);
+  }, [movimientos]);
+
+  useEffect(() => {
+    setComprasLocales(compras);
+  }, [compras]);
 
   useEffect(() => {
     if (Array.isArray(proyecto.comentarios)) {
@@ -282,7 +298,9 @@ export default function FichaProyectoClient({
     setEditResponsable(datosProyectoLocal.responsable || '');
     setEditClienteId(datosProyectoLocal.cliente_id ? String(datosProyectoLocal.cliente_id) : '');
     setEditUbicacion(datosProyectoLocal.ubicacion || '');
-    setEditSuperficie(datosProyectoLocal.superficie ? numeroAInputArg(datosProyectoLocal.superficie) : '');
+    setEditSuperficie(
+      datosProyectoLocal.superficie ? numeroAInputArg(datosProyectoLocal.superficie) : ''
+    );
     const mon = (
       String(datosProyectoLocal.moneda || 'USD').toUpperCase() === 'ARS' ? 'ARS' : 'USD'
     ) as 'USD' | 'ARS';
@@ -559,6 +577,7 @@ export default function FichaProyectoClient({
       }
 
       setDatosProyectoLocal((prev: any) => ({ ...prev, ...datos }));
+      setMonedaEconomico(editMoneda);
       setModalEditarProy(false);
       mostrarToast('Proyecto actualizado correctamente');
       router.refresh();
@@ -576,8 +595,19 @@ export default function FichaProyectoClient({
     router.refresh();
   };
 
-  const cambiarEstadoMovimientoRapido = async (movId: number, nuevoEstado: string) => {
-    await supabase.from('movimientos').update({ estado: nuevoEstado }).eq('id', movId);
+  const cambiarEstadoMovimientoRapido = async (mov: any, nuevoEstado: string) => {
+    if (mov.es_desde_compra && mov.compra_origen_id) {
+      const estadoCompra = nuevoEstado === 'Resta abonar' ? 'Pendiente de pago' : 'Entregado';
+      await supabase
+        .from('compras')
+        .update({ estado: estadoCompra })
+        .eq('id', mov.compra_origen_id);
+    } else {
+      await supabase.from('movimientos').update({ estado: nuevoEstado }).eq('id', mov.id);
+    }
+    setMovimientosLocales((prev) =>
+      prev.map((m) => (m.id === mov.id ? { ...m, estado: nuevoEstado } : m))
+    );
     mostrarToast(`Movimiento marcado como ${nuevoEstado}`);
     router.refresh();
   };
@@ -588,7 +618,7 @@ export default function FichaProyectoClient({
     if (mon === 'USD') return impOriginal;
     const impUsd = Number(m.importe_usd ?? 0);
     if (impUsd > 0) return impUsd;
-    const cot = Number(m.valor_usd ?? 0);
+    const cot = Number(m.valor_usd ?? 0) || 1450;
     return cot > 0 ? impOriginal / cot : 0;
   };
 
@@ -611,13 +641,15 @@ export default function FichaProyectoClient({
   };
 
   const cotizacionPromedioProyecto = useMemo(() => {
-    const conCot = movimientos.filter((m) => Number(m.valor_usd || 0) > 0);
+    const conCot = movimientosLocales.filter((m) => Number(m.valor_usd || 0) > 0);
     if (conCot.length === 0) return 1450;
     const suma = conCot.reduce((acc, m) => acc + Number(m.valor_usd), 0);
     return Math.round(suma / conCot.length);
-  }, [movimientos]);
+  }, [movimientosLocales]);
 
-  const monedaBaseProyecto = String(datosProyectoLocal.moneda || 'USD').toUpperCase();
+  const monedaBaseProyecto = (
+    String(datosProyectoLocal.moneda || 'USD').toUpperCase() === 'ARS' ? 'ARS' : 'USD'
+  ) as 'USD' | 'ARS';
   const presupuestoCargado = Number(datosProyectoLocal.presupuesto || 0);
 
   const presupuestoUsd = useMemo(() => {
@@ -631,43 +663,48 @@ export default function FichaProyectoClient({
   }, [monedaBaseProyecto, presupuestoCargado, cotizacionPromedioProyecto]);
 
   const ingresosCobradosUsd = useMemo(() => {
-    return movimientos
+    return movimientosLocales
       .filter((m) => !esEgresoMov(m) && esAbonadoMov(m.estado))
       .reduce((acc, m) => acc + obtenerUsdEquivalente(m), 0);
-  }, [movimientos]);
+  }, [movimientosLocales]);
 
   const egresosProyectoUsd = useMemo(() => {
-    return movimientos
+    return movimientosLocales
       .filter((m) => esEgresoMov(m))
       .reduce((acc, m) => acc + obtenerUsdEquivalente(m), 0);
-  }, [movimientos]);
+  }, [movimientosLocales]);
 
   const ingresosCobradosArs = useMemo(() => {
-    return movimientos
+    return movimientosLocales
       .filter((m) => !esEgresoMov(m) && esAbonadoMov(m.estado))
       .reduce((acc, m) => acc + obtenerArsEquivalente(m), 0);
-  }, [movimientos]);
+  }, [movimientosLocales]);
 
   const egresosProyectoArs = useMemo(() => {
-    return movimientos
+    return movimientosLocales
       .filter((m) => esEgresoMov(m))
       .reduce((acc, m) => acc + obtenerArsEquivalente(m), 0);
-  }, [movimientos]);
+  }, [movimientosLocales]);
 
   const pendienteCobroUsd = Math.max(0, presupuestoUsd - ingresosCobradosUsd);
   const pendienteCobroArs = Math.max(0, presupuestoArs - ingresosCobradosArs);
   const resultadoNetoUsd = ingresosCobradosUsd - egresosProyectoUsd;
+  const resultadoNetoArs = ingresosCobradosArs - egresosProyectoArs;
   const porcentajeCobrado =
     presupuestoUsd > 0 ? Math.min(100, Math.round((ingresosCobradosUsd / presupuestoUsd) * 100)) : 0;
 
-  const movimientosNormalizadosUsd = useMemo(() => {
-    return movimientos.map((m) => ({
-      ...m,
-      moneda: 'USD',
-      importe: obtenerUsdEquivalente(m),
-      monto: obtenerUsdEquivalente(m),
-    }));
-  }, [movimientos]);
+  const movimientosNormalizadosMoneda = useMemo(() => {
+    return movimientosLocales.map((m) => {
+      const val =
+        monedaEconomico === 'ARS' ? obtenerArsEquivalente(m) : obtenerUsdEquivalente(m);
+      return {
+        ...m,
+        moneda: monedaEconomico,
+        importe: val,
+        monto: val,
+      };
+    });
+  }, [movimientosLocales, monedaEconomico]);
 
   const statsTareas = useMemo(() => {
     const hoyIso = new Date().toISOString().split('T')[0];
@@ -1068,8 +1105,8 @@ export default function FichaProyectoClient({
               { id: 'tareas', label: `Tareas (${tareas.length})` },
               { id: 'visitas', label: `Visitas y Bitácora (${visitas.length})` },
               { id: 'documentos', label: `Documentos (${documentos.length})` },
-              { id: 'compras', label: `Compras (${compras.length})` },
-              { id: 'finanzas', label: `Finanzas (${movimientos.length})` },
+              { id: 'compras', label: `Compras (${comprasLocales.length})` },
+              { id: 'finanzas', label: `Finanzas (${movimientosLocales.length})` },
               { id: 'comentarios', label: `Comentarios (${comentarios.length})` },
             ].map((tab) => (
               <button
@@ -1740,16 +1777,42 @@ export default function FichaProyectoClient({
       {/* PESTAÑA: COMENTARIOS Y MENCIONES (@NOMBRE) */}
       {pestanaActiva === 'comentarios' && renderTarjetaComentarios('max-h-[520px]')}
 
-      {/* PESTAÑA: FINANZAS */}
+      {/* PESTAÑA: FINANZAS (RESPETANDO MONEDA DEL PROYECTO: ARS O USD) */}
       {pestanaActiva === 'finanzas' && (
         <>
           <div className="bg-[#242424] border border-white/10 rounded-2xl p-6 shadow-xl mb-6">
             <div className="flex flex-wrap justify-between items-center gap-4 mb-6">
               <div>
-                <h2 className="text-base font-bold text-white flex items-center gap-2">
-                  <CircleDollarSign className="w-4 h-4 text-[#EAB308]" />
-                  Balance Financiero del Proyecto (USD)
-                </h2>
+                <div className="flex flex-wrap items-center gap-2.5">
+                  <h2 className="text-base font-bold text-white flex items-center gap-2">
+                    <CircleDollarSign className="w-4 h-4 text-[#EAB308]" />
+                    Balance Financiero del Proyecto ({monedaEconomico})
+                  </h2>
+                  <div className="bg-[#181818] border border-white/10 rounded-lg p-0.5 inline-flex">
+                    <button
+                      type="button"
+                      onClick={() => setMonedaEconomico('ARS')}
+                      className={`px-2.5 py-0.5 rounded text-[11px] font-extrabold cursor-pointer ${
+                        monedaEconomico === 'ARS'
+                          ? 'bg-[#EAB308] text-black'
+                          : 'text-gray-400 hover:text-white'
+                      }`}
+                    >
+                      ARS
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setMonedaEconomico('USD')}
+                      className={`px-2.5 py-0.5 rounded text-[11px] font-extrabold cursor-pointer ${
+                        monedaEconomico === 'USD'
+                          ? 'bg-[#EAB308] text-black'
+                          : 'text-gray-400 hover:text-white'
+                      }`}
+                    >
+                      USD
+                    </button>
+                  </div>
+                </div>
                 <p className="text-xs text-gray-400 mt-0.5">
                   Comparativa de honorarios pactados, cobrados, pendientes y gastos/compras del proyecto
                 </p>
@@ -1772,38 +1835,60 @@ export default function FichaProyectoClient({
                 <div className="bg-[#181818] border border-white/10 rounded-xl p-4">
                   <div className="text-xs text-gray-400">Presupuesto / Honorarios</div>
                   <div className="text-2xl font-extrabold text-white mt-1">
-                    USD ${presupuestoUsd.toLocaleString('es-AR')}
+                    {monedaEconomico === 'ARS'
+                      ? `ARS $${presupuestoArs.toLocaleString('es-AR', {
+                          maximumFractionDigits: 2,
+                        })}`
+                      : `USD $${presupuestoUsd.toLocaleString('es-AR', {
+                          maximumFractionDigits: 2,
+                        })}`}
                   </div>
                 </div>
                 <div className="bg-[#181818] border border-white/10 rounded-xl p-4">
                   <div className="text-xs text-gray-400">Ingresos Cobrados</div>
                   <div className="text-2xl font-extrabold text-emerald-400 mt-1">
-                    USD $
-                    {ingresosCobradosUsd.toLocaleString('es-AR', {
-                      minimumFractionDigits: ingresosCobradosUsd % 1 === 0 ? 0 : 2,
-                      maximumFractionDigits: 2,
-                    })}
+                    {monedaEconomico === 'ARS'
+                      ? `ARS $${ingresosCobradosArs.toLocaleString('es-AR', {
+                          maximumFractionDigits: 2,
+                        })}`
+                      : `USD $${ingresosCobradosUsd.toLocaleString('es-AR', {
+                          maximumFractionDigits: 2,
+                        })}`}
                   </div>
                 </div>
                 <div className="bg-[#181818] border border-white/10 rounded-xl p-4">
                   <div className="text-xs text-gray-400">Pendiente de Cobro</div>
                   <div className="text-2xl font-extrabold text-[#EAB308] mt-1">
-                    USD $
-                    {pendienteCobroUsd.toLocaleString('es-AR', {
-                      minimumFractionDigits: pendienteCobroUsd % 1 === 0 ? 0 : 2,
-                      maximumFractionDigits: 2,
-                    })}
+                    {monedaEconomico === 'ARS'
+                      ? `ARS $${pendienteCobroArs.toLocaleString('es-AR', {
+                          maximumFractionDigits: 2,
+                        })}`
+                      : `USD $${pendienteCobroUsd.toLocaleString('es-AR', {
+                          maximumFractionDigits: 2,
+                        })}`}
                   </div>
                 </div>
                 <div className="bg-[#181818] border border-white/10 rounded-xl p-4">
                   <div className="text-xs text-gray-400">Resultado Neto</div>
-                  <div className="text-2xl font-extrabold text-emerald-400 mt-1">
-                    USD $
-                    {resultadoNetoUsd.toLocaleString('es-AR', {
-                      minimumFractionDigits: resultadoNetoUsd % 1 === 0 ? 0 : 2,
-                      maximumFractionDigits: 2,
-                    })}
-                  </div>
+                  {(() => {
+                    const valorNeto =
+                      monedaEconomico === 'ARS' ? resultadoNetoArs : resultadoNetoUsd;
+                    const esNegativo = valorNeto < 0;
+                    const absVal = Math.abs(valorNeto);
+                    return (
+                      <div
+                        className={`text-2xl font-extrabold mt-1 ${
+                          esNegativo ? 'text-rose-500' : 'text-emerald-400'
+                        }`}
+                      >
+                        {esNegativo ? '-' : ''}
+                        {monedaEconomico} $
+                        {absVal.toLocaleString('es-AR', {
+                          maximumFractionDigits: 2,
+                        })}
+                      </div>
+                    );
+                  })()}
                 </div>
               </div>
 
@@ -1811,7 +1896,15 @@ export default function FichaProyectoClient({
                 <div>
                   <div className="flex justify-between text-xs font-bold mb-1.5">
                     <span className="text-gray-300">Presupuesto / Honorarios</span>
-                    <span>USD ${presupuestoUsd.toLocaleString('es-AR')}</span>
+                    <span>
+                      {monedaEconomico === 'ARS'
+                        ? `ARS $${presupuestoArs.toLocaleString('es-AR', {
+                            maximumFractionDigits: 2,
+                          })}`
+                        : `USD $${presupuestoUsd.toLocaleString('es-AR', {
+                            maximumFractionDigits: 2,
+                          })}`}
+                    </span>
                   </div>
                   <div className="h-2.5 bg-gray-800 rounded-full overflow-hidden">
                     <div className="h-full bg-cyan-400 w-full rounded-full" />
@@ -1821,11 +1914,13 @@ export default function FichaProyectoClient({
                   <div className="flex justify-between text-xs font-bold mb-1.5">
                     <span className="text-gray-300">Ingresos Cobrados</span>
                     <span className="text-emerald-400">
-                      USD $
-                      {ingresosCobradosUsd.toLocaleString('es-AR', {
-                        minimumFractionDigits: ingresosCobradosUsd % 1 === 0 ? 0 : 2,
-                        maximumFractionDigits: 2,
-                      })}
+                      {monedaEconomico === 'ARS'
+                        ? `ARS $${ingresosCobradosArs.toLocaleString('es-AR', {
+                            maximumFractionDigits: 2,
+                          })}`
+                        : `USD $${ingresosCobradosUsd.toLocaleString('es-AR', {
+                            maximumFractionDigits: 2,
+                          })}`}
                     </span>
                   </div>
                   <div className="h-2.5 bg-gray-800 rounded-full overflow-hidden">
@@ -1839,11 +1934,13 @@ export default function FichaProyectoClient({
                   <div className="flex justify-between text-xs font-bold mb-1.5">
                     <span className="text-gray-300">Pendiente de Cobro</span>
                     <span className="text-[#EAB308]">
-                      USD $
-                      {pendienteCobroUsd.toLocaleString('es-AR', {
-                        minimumFractionDigits: pendienteCobroUsd % 1 === 0 ? 0 : 2,
-                        maximumFractionDigits: 2,
-                      })}
+                      {monedaEconomico === 'ARS'
+                        ? `ARS $${pendienteCobroArs.toLocaleString('es-AR', {
+                            maximumFractionDigits: 2,
+                          })}`
+                        : `USD $${pendienteCobroUsd.toLocaleString('es-AR', {
+                            maximumFractionDigits: 2,
+                          })}`}
                     </span>
                   </div>
                   <div className="h-2.5 bg-gray-800 rounded-full overflow-hidden">
@@ -1857,11 +1954,15 @@ export default function FichaProyectoClient({
                   <div className="flex justify-between text-xs font-bold mb-1.5">
                     <span className="text-gray-300">Gastos Directos y Compras</span>
                     <span className="text-rose-400">
-                      USD $
-                      {egresosProyectoUsd.toLocaleString('es-AR', {
-                        minimumFractionDigits: 2,
-                        maximumFractionDigits: 2,
-                      })}
+                      {monedaEconomico === 'ARS'
+                        ? `ARS $${egresosProyectoArs.toLocaleString('es-AR', {
+                            minimumFractionDigits: 2,
+                            maximumFractionDigits: 2,
+                          })}`
+                        : `USD $${egresosProyectoUsd.toLocaleString('es-AR', {
+                            minimumFractionDigits: 2,
+                            maximumFractionDigits: 2,
+                          })}`}
                     </span>
                   </div>
                   <div className="h-2.5 bg-gray-800 rounded-full overflow-hidden">
@@ -1882,24 +1983,24 @@ export default function FichaProyectoClient({
           </div>
 
           <CurvaInversion
-            movimientos={movimientosNormalizadosUsd}
-            moneda="USD"
-            presupuestoTotal={presupuestoUsd}
-            titulo={`Curva S de Inversión · ${datosProyectoLocal.codigo} (USD)`}
+            movimientos={movimientosNormalizadosMoneda}
+            moneda={monedaEconomico}
+            presupuestoTotal={monedaEconomico === 'ARS' ? presupuestoArs : presupuestoUsd}
+            titulo={`Curva S de Inversión · ${datosProyectoLocal.codigo} (${monedaEconomico})`}
             subtitulo="Evolución acumulada contra el presupuesto pactado, cobros recibidos y gastos ejecutados"
           />
 
           <div className="bg-[#242424] border border-white/10 rounded-2xl p-6 shadow-xl mb-6">
             <h3 className="text-sm font-bold text-white mb-4">
-              Historial de Movimientos del Proyecto ({movimientos.length})
+              Historial de Movimientos del Proyecto ({movimientosLocales.length})
             </h3>
-            {movimientos.length === 0 ? (
+            {movimientosLocales.length === 0 ? (
               <p className="text-xs text-gray-400 py-4 text-center">
                 No hay movimientos financieros vinculados a este proyecto todavía.
               </p>
             ) : (
               <div className="space-y-3">
-                {movimientos.map((m) => {
+                {movimientosLocales.map((m) => {
                   const esEg = esEgresoMov(m);
                   const mon = String(m.moneda || 'USD').toUpperCase();
                   const impOriginal = Number(m.importe ?? 0) || Number(m.monto ?? 0);
@@ -1911,6 +2012,16 @@ export default function FichaProyectoClient({
                     <div
                       key={m.id}
                       onClick={() => {
+                        if (m.es_desde_compra && m.compra_origen_id) {
+                          const compOriginal = comprasLocales.find(
+                            (c) => String(c.id) === String(m.compra_origen_id)
+                          );
+                          if (compOriginal) {
+                            setCompraEditando(compOriginal);
+                            setModalCompra(true);
+                            return;
+                          }
+                        }
                         setMovEditando(m);
                         setModalMovimiento(true);
                       }}
@@ -1970,7 +2081,7 @@ export default function FichaProyectoClient({
                         <select
                           value={m.estado || (abonado ? 'Abonado' : 'Resta abonar')}
                           onClick={(e) => e.stopPropagation()}
-                          onChange={(e) => cambiarEstadoMovimientoRapido(m.id, e.target.value)}
+                          onChange={(e) => cambiarEstadoMovimientoRapido(m, e.target.value)}
                           className={`px-3 py-1 rounded-full text-xs font-bold border cursor-pointer ${
                             abonado
                               ? 'bg-emerald-950/70 border-emerald-700/50 text-emerald-400'
@@ -2014,46 +2125,35 @@ export default function FichaProyectoClient({
         </>
       )}
 
-      {/* PESTAÑA: COMPRAS Y DESGLOSE POR PROVEEDOR EN EL PROYECTO */}
+      {/* PESTAÑA: COMPRAS Y DESGLOSE POR PROVEEDOR (CON LA MONEDA DEL PROYECTO) */}
       {pestanaActiva === 'compras' &&
         (() => {
           const gruposProv = Object.values(
-            compras.reduce((acc: Record<string, any>, c: any) => {
+            comprasLocales.reduce((acc: Record<string, any>, c: any) => {
               const nombre = String(c.proveedor || 'Sin proveedor').trim();
+              const signo = c.tipo_comprobante === 'Nota de Crédito' ? -1 : 1;
+              const monCompra = String(c.moneda || 'ARS').toUpperCase();
+              const impCompra = Number(c.importe || 0);
+              const cotCompra = Number(c.valor_usd || cotizacionPromedioProyecto) || 1450;
+
+              const montoEnMonedaProyecto =
+                monedaBaseProyecto === 'ARS'
+                  ? monCompra === 'ARS'
+                    ? impCompra
+                    : impCompra * cotCompra
+                  : monCompra === 'USD'
+                  ? impCompra
+                  : Number(c.importe_usd || impCompra / cotCompra);
+
               if (!acc[nombre]) {
                 acc[nombre] = {
                   proveedor: nombre,
-                  totalUsd: 0,
+                  totalMonedaProyecto: 0,
                   pedidos: [],
-                  materiales: [],
                 };
               }
-              const usd =
-                String(c.moneda || '').toUpperCase() === 'USD'
-                  ? Number(c.importe || 0)
-                  : Number(c.importe_usd || 0);
-              acc[nombre].totalUsd += usd;
+              acc[nombre].totalMonedaProyecto += signo * montoEnMonedaProyecto;
               acc[nombre].pedidos.push(c);
-
-              if (Array.isArray(c.items_materiales) && c.items_materiales.length > 0) {
-                c.items_materiales.forEach((it: any) => {
-                  acc[nombre].materiales.push({
-                    ...it,
-                    fecha: c.fecha,
-                    factura: c.nro_orden,
-                  });
-                });
-              } else {
-                acc[nombre].materiales.push({
-                  id: c.id,
-                  material: c.concepto,
-                  cantidad: '1',
-                  unidad: 'pedido',
-                  estado: c.estado || 'Entregado',
-                  fecha: c.fecha,
-                  factura: c.nro_orden,
-                });
-              }
               return acc;
             }, {})
           );
@@ -2069,10 +2169,10 @@ export default function FichaProyectoClient({
                   <div>
                     <h2 className="text-base font-bold text-white flex items-center gap-2">
                       <ShoppingCart className="w-4 h-4 text-[#EAB308]" />
-                      Proveedores y Compras del Proyecto ({compras.length})
+                      Proveedores y Compras del Proyecto ({comprasLocales.length})
                     </h2>
                     <p className="text-xs text-gray-400 mt-0.5">
-                      Seleccioná un proveedor para ver los materiales adquiridos, cantidades y estado
+                      Seleccioná un proveedor para desplegar todas las compras realizadas
                     </p>
                   </div>
                   <button
@@ -2108,12 +2208,11 @@ export default function FichaProyectoClient({
                             {g.proveedor}
                           </div>
                           <div className="text-[11px] text-gray-400 mt-0.5">
-                            {g.pedidos.length} {g.pedidos.length === 1 ? 'compra' : 'compras'} ·{' '}
-                            {g.materiales.length} ítems
+                            {g.pedidos.length} {g.pedidos.length === 1 ? 'compra' : 'compras'}
                           </div>
                           <div className="text-sm font-extrabold text-[#EAB308] mt-2">
-                            USD $
-                            {g.totalUsd.toLocaleString('es-AR', {
+                            {monedaBaseProyecto} $
+                            {g.totalMonedaProyecto.toLocaleString('es-AR', {
                               minimumFractionDigits: 2,
                               maximumFractionDigits: 2,
                             })}
@@ -2128,8 +2227,8 @@ export default function FichaProyectoClient({
                   <div className="bg-[#181818] border border-[#EAB308]/40 rounded-xl p-4 mb-5">
                     <div className="flex justify-between items-center mb-3">
                       <h3 className="text-xs font-extrabold uppercase tracking-wider text-[#EAB308]">
-                        Materiales comprados a {grupoActivo.proveedor} (
-                        {grupoActivo.materiales.length})
+                        Compras realizadas a {grupoActivo.proveedor} (
+                        {grupoActivo.pedidos.length})
                       </h3>
                       <button
                         type="button"
@@ -2144,29 +2243,114 @@ export default function FichaProyectoClient({
                       <table className="w-full text-left border-collapse text-xs">
                         <thead>
                           <tr className="border-b border-white/10 text-[10px] font-bold uppercase text-gray-400">
-                            <th className="py-2 px-3">MATERIAL / DESCRIPCIÓN</th>
-                            <th className="py-2 px-3 text-center">CANTIDAD</th>
                             <th className="py-2 px-3">FECHA / FACTURA</th>
-                            <th className="py-2 px-3 text-right">ESTADO</th>
+                            <th className="py-2 px-3">PROVEEDOR / CONCEPTO</th>
+                            <th className="py-2 px-3">IMPORTE ORIGINAL</th>
+                            <th className="py-2 px-3">EQUIV. USD</th>
+                            <th className="py-2 px-3">ESTADO</th>
+                            <th className="py-2 px-3 text-right">ACCIONES</th>
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-white/10">
-                          {grupoActivo.materiales.map((m: any, i: number) => (
-                            <tr key={m.id || i}>
-                              <td className="py-2.5 px-3 font-bold text-white">{m.material}</td>
-                              <td className="py-2.5 px-3 text-center font-extrabold text-[#EAB308]">
-                                {m.cantidad} {m.unidad}
-                              </td>
-                              <td className="py-2.5 px-3 text-gray-400">
-                                {m.fecha || '—'} {m.factura ? `· ${m.factura}` : ''}
-                              </td>
-                              <td className="py-2.5 px-3 text-right">
-                                <span className="px-2.5 py-0.5 rounded-full bg-gray-800 text-gray-200 font-semibold text-[11px]">
-                                  {m.estado}
-                                </span>
-                              </td>
-                            </tr>
-                          ))}
+                          {grupoActivo.pedidos.map((c: any) => {
+                            const esNc = c.tipo_comprobante === 'Nota de Crédito';
+                            return (
+                              <tr
+                                key={c.id}
+                                onClick={() => {
+                                  setCompraEditando(c);
+                                  setModalCompra(true);
+                                }}
+                                className="hover:bg-white/5 cursor-pointer"
+                              >
+                                <td className="py-2.5 px-3">
+                                  <div className="font-bold text-white">{c.fecha || '—'}</div>
+                                  <div className="text-[11px] text-gray-400">
+                                    {c.nro_orden || '—'}
+                                  </div>
+                                </td>
+                                <td className="py-2.5 px-3">
+                                  <div className="font-bold text-white">{c.proveedor}</div>
+                                  <div className="text-[11px] text-gray-400">{c.concepto}</div>
+                                </td>
+                                <td
+                                  className={`py-2.5 px-3 font-extrabold ${
+                                    esNc ? 'text-emerald-400' : 'text-white'
+                                  }`}
+                                >
+                                  {esNc ? '-' : ''}
+                                  {c.moneda === 'USD' ? 'USD $' : 'ARS $'}
+                                  {Number(c.importe || 0).toLocaleString('es-AR', {
+                                    minimumFractionDigits: 2,
+                                    maximumFractionDigits: 2,
+                                  })}
+                                </td>
+                                <td
+                                  className={`py-2.5 px-3 font-extrabold ${
+                                    esNc ? 'text-emerald-400' : 'text-[#EAB308]'
+                                  }`}
+                                >
+                                  {esNc ? '-' : ''}USD $
+                                  {Number(
+                                    c.moneda === 'USD' ? c.importe || 0 : c.importe_usd || 0
+                                  ).toLocaleString('es-AR', {
+                                    minimumFractionDigits: 2,
+                                    maximumFractionDigits: 2,
+                                  })}
+                                </td>
+                                <td className="py-2.5 px-3">
+                                  <span className="px-2.5 py-0.5 rounded-full bg-gray-800 text-gray-200 font-semibold text-[11px]">
+                                    {c.estado}
+                                  </span>
+                                </td>
+                                <td className="py-2.5 px-3 text-right">
+                                  <div className="inline-flex items-center gap-2">
+                                    {c.archivo_url && (
+                                      <button
+                                        type="button"
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          abrirVisorIntegrado(
+                                            c.archivo_url,
+                                            `${c.proveedor || 'Factura'} · ${
+                                              c.nro_orden || c.concepto
+                                            }`
+                                          );
+                                        }}
+                                        className="px-2.5 py-1 rounded-lg bg-blue-500/15 border border-blue-500/40 text-blue-400 hover:bg-blue-500/25 font-semibold inline-flex items-center gap-1 cursor-pointer"
+                                      >
+                                        <FileText className="w-3.5 h-3.5" /> PDF
+                                      </button>
+                                    )}
+                                    <button
+                                      type="button"
+                                      onClick={async (e) => {
+                                        e.stopPropagation();
+                                        await moverAPapelera({
+                                          tabla: 'compras',
+                                          modulo: 'Compras y Pedidos',
+                                          titulo: `${c.proveedor || 'Proveedor'} · ${
+                                            c.concepto || ''
+                                          }`,
+                                          subtitulo: c.nro_orden || '',
+                                          registro: c,
+                                        });
+                                        setComprasLocales((prev) =>
+                                          prev.filter((item) => item.id !== c.id)
+                                        );
+                                        mostrarToast('Compra enviada a papelera');
+                                        router.refresh();
+                                      }}
+                                      title="Enviar a papelera"
+                                      className="p-1.5 rounded-lg bg-rose-500/15 border border-rose-500/40 text-rose-400 hover:bg-rose-500/30 cursor-pointer"
+                                    >
+                                      <Trash2 className="w-3.5 h-3.5" />
+                                    </button>
+                                  </div>
+                                </td>
+                              </tr>
+                            );
+                          })}
                         </tbody>
                       </table>
                     </div>
@@ -2186,91 +2370,110 @@ export default function FichaProyectoClient({
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-white/10 text-sm">
-                      {compras.length === 0 ? (
+                      {comprasLocales.length === 0 ? (
                         <tr>
                           <td colSpan={6} className="py-8 text-center text-gray-400 text-xs">
                             Aún no hay compras cargadas en este proyecto.
                           </td>
                         </tr>
                       ) : (
-                        compras.map((c) => (
-                          <tr
-                            key={c.id}
-                            onClick={() => {
-                              setCompraEditando(c);
-                              setModalCompra(true);
-                            }}
-                            className="hover:bg-white/5 transition-colors cursor-pointer"
-                          >
-                            <td className="py-3 px-3 text-xs">
-                              <div className="font-semibold text-white">{c.fecha || '—'}</div>
-                              <div className="text-[11px] text-gray-400">{c.nro_orden || '—'}</div>
-                            </td>
-                            <td className="py-3 px-3 text-xs">
-                              <div className="font-bold text-white">{c.proveedor}</div>
-                              <div className="text-gray-400">{c.concepto}</div>
-                            </td>
-                            <td className="py-3 px-3 text-xs font-bold text-white">
-                              {c.moneda === 'USD' ? 'USD $' : '$ '}
-                              {Number(c.importe || 0).toLocaleString('es-AR', {
-                                minimumFractionDigits: 2,
-                                maximumFractionDigits: 2,
-                              })}
-                            </td>
-                            <td className="py-3 px-3 text-xs font-extrabold text-[#EAB308]">
-                              USD $
-                              {Number(
-                                c.moneda === 'USD' ? c.importe || 0 : c.importe_usd || 0
-                              ).toLocaleString('es-AR', {
-                                minimumFractionDigits: 2,
-                                maximumFractionDigits: 2,
-                              })}
-                            </td>
-                            <td className="py-3 px-3 text-xs">
-                              <span className="px-2.5 py-0.5 rounded-full bg-gray-800 text-gray-200 font-semibold text-[11px]">
-                                {c.estado}
-                              </span>
-                            </td>
-                            <td className="py-3 px-3 text-right text-xs">
-                              <div className="inline-flex items-center gap-2">
-                                {c.archivo_url && (
+                        comprasLocales.map((c) => {
+                          const esNc = c.tipo_comprobante === 'Nota de Crédito';
+                          return (
+                            <tr
+                              key={c.id}
+                              onClick={() => {
+                                setCompraEditando(c);
+                                setModalCompra(true);
+                              }}
+                              className="hover:bg-white/5 transition-colors cursor-pointer"
+                            >
+                              <td className="py-3 px-3 text-xs">
+                                <div className="font-semibold text-white">{c.fecha || '—'}</div>
+                                <div className="text-[11px] text-gray-400">{c.nro_orden || '—'}</div>
+                              </td>
+                              <td className="py-3 px-3 text-xs">
+                                <div className="font-bold text-white">{c.proveedor}</div>
+                                <div className="text-gray-400">{c.concepto}</div>
+                              </td>
+                              <td
+                                className={`py-3 px-3 text-xs font-bold ${
+                                  esNc ? 'text-emerald-400' : 'text-white'
+                                }`}
+                              >
+                                {esNc ? '-' : ''}
+                                {c.moneda === 'USD' ? 'USD $' : 'ARS $'}
+                                {Number(c.importe || 0).toLocaleString('es-AR', {
+                                  minimumFractionDigits: 2,
+                                  maximumFractionDigits: 2,
+                                })}
+                              </td>
+                              <td
+                                className={`py-3 px-3 text-xs font-extrabold ${
+                                  esNc ? 'text-emerald-400' : 'text-[#EAB308]'
+                                }`}
+                              >
+                                {esNc ? '-' : ''}USD $
+                                {Number(
+                                  c.moneda === 'USD' ? c.importe || 0 : c.importe_usd || 0
+                                ).toLocaleString('es-AR', {
+                                  minimumFractionDigits: 2,
+                                  maximumFractionDigits: 2,
+                                })}
+                              </td>
+                              <td className="py-3 px-3 text-xs">
+                                <span className="px-2.5 py-0.5 rounded-full bg-gray-800 text-gray-200 font-semibold text-[11px]">
+                                  {c.estado}
+                                </span>
+                              </td>
+                              <td className="py-3 px-3 text-right text-xs">
+                                <div className="inline-flex items-center gap-2">
+                                  {c.archivo_url && (
+                                    <button
+                                      type="button"
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        abrirVisorIntegrado(
+                                          c.archivo_url,
+                                          `${c.proveedor || 'Factura'} · ${
+                                            c.nro_orden || c.concepto
+                                          }`
+                                        );
+                                      }}
+                                      className="px-2.5 py-1 rounded-lg bg-blue-500/15 border border-blue-500/40 text-blue-400 hover:bg-blue-500/25 font-semibold inline-flex items-center gap-1 cursor-pointer"
+                                    >
+                                      <FileText className="w-3.5 h-3.5" /> PDF
+                                    </button>
+                                  )}
                                   <button
                                     type="button"
-                                    onClick={(e) => {
+                                    onClick={async (e) => {
                                       e.stopPropagation();
-                                      abrirVisorIntegrado(
-                                        c.archivo_url,
-                                        `${c.proveedor || 'Factura'} · ${c.nro_orden || c.concepto}`
+                                      await moverAPapelera({
+                                        tabla: 'compras',
+                                        modulo: 'Compras y Pedidos',
+                                        titulo: `${c.proveedor || 'Proveedor'} · ${
+                                          c.concepto || ''
+                                        }`,
+                                        subtitulo: c.nro_orden || '',
+                                        registro: c,
+                                      });
+                                      setComprasLocales((prev) =>
+                                        prev.filter((item) => item.id !== c.id)
                                       );
+                                      mostrarToast('Compra enviada a papelera');
+                                      router.refresh();
                                     }}
-                                    className="px-2.5 py-1 rounded-lg bg-blue-500/15 border border-blue-500/40 text-blue-400 hover:bg-blue-500/25 font-semibold inline-flex items-center gap-1 cursor-pointer"
+                                    title="Enviar a papelera"
+                                    className="p-1.5 rounded-lg bg-rose-500/15 border border-rose-500/40 text-rose-400 hover:bg-rose-500/30 cursor-pointer"
                                   >
-                                    <FileText className="w-3.5 h-3.5" /> PDF
+                                    <Trash2 className="w-3.5 h-3.5" />
                                   </button>
-                                )}
-                                <button
-                                  type="button"
-                                  onClick={async (e) => {
-                                    e.stopPropagation();
-                                    await moverAPapelera({
-                                      tabla: 'compras',
-                                      modulo: 'Compras y Pedidos',
-                                      titulo: `${c.proveedor || 'Proveedor'} · ${c.concepto || ''}`,
-                                      subtitulo: c.nro_orden || '',
-                                      registro: c,
-                                    });
-                                    mostrarToast('Compra enviada a papelera');
-                                    router.refresh();
-                                  }}
-                                  title="Enviar a papelera"
-                                  className="p-1.5 rounded-lg bg-rose-500/15 border border-rose-500/40 text-rose-400 hover:bg-rose-500/30 cursor-pointer"
-                                >
-                                  <Trash2 className="w-3.5 h-3.5" />
-                                </button>
-                              </div>
-                            </td>
-                          </tr>
-                        ))
+                                </div>
+                              </td>
+                            </tr>
+                          );
+                        })
                       )}
                     </tbody>
                   </table>
@@ -2905,7 +3108,7 @@ export default function FichaProyectoClient({
         etapasLista={ETAPAS_PROYECTO}
         tareas={tareas}
         visitas={visitas}
-        movimientos={movimientos}
+        movimientos={movimientosLocales}
         presupuestoUsd={presupuestoUsd}
         cobradoUsd={ingresosCobradosUsd}
         gastosUsd={egresosProyectoUsd}
@@ -2990,7 +3193,7 @@ export default function FichaProyectoClient({
         clientes={clientes}
         proveedores={proveedores}
         proyectoFijoCodigo={datosProyectoLocal.codigo}
-        monedaInicial="ARS"
+        monedaInicial={monedaBaseProyecto}
       />
 
       {toast &&

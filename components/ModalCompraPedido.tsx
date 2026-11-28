@@ -17,6 +17,8 @@ import {
   RefreshCw,
   Sparkles,
   Eye,
+  AlertTriangle,
+  FileCheck2,
 } from 'lucide-react';
 
 function formatearMilesDecimales(valorCrudo: string): string {
@@ -45,9 +47,23 @@ function numATextoArg(n: number): string {
   });
 }
 
+function normalizarNroComprobante(nro: string): string {
+  return String(nro || '')
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, '');
+}
+
 const OPCIONES_MONEDA: ('ARS' | 'USD')[] = ['ARS', 'USD'];
 const OPCIONES_ESTADO = ['Encargado', 'En tránsito', 'Entregado', 'Pendiente de pago'];
-const OPCIONES_COMPROBANTE = ['Factura', 'Factura A', 'Factura C', 'Remito', 'Orden de Compra'];
+const OPCIONES_COMPROBANTE = [
+  'Factura',
+  'Factura A',
+  'Factura C',
+  'Nota de Crédito',
+  'Remito',
+  'Orden de Compra',
+];
 
 export default function ModalCompraPedido({
   abierto,
@@ -73,6 +89,12 @@ export default function ModalCompraPedido({
   const [infoAutoLectura, setInfoAutoLectura] = useState<string | null>(null);
   const [visorPrevio, setVisorPrevio] = useState(false);
   const [listaProveedores, setListaProveedores] = useState<any[]>(proveedores);
+  const [facturasCargadas, setFacturasCargadas] = useState<any[]>([]);
+  const [facturaAsociadaId, setFacturaAsociadaId] = useState<string>('');
+  const [alertaDuplicado, setAlertaDuplicado] = useState<{
+    mensaje: string;
+    detalle?: string;
+  } | null>(null);
 
   const hoy = new Date().toISOString().split('T')[0];
 
@@ -81,7 +103,7 @@ export default function ModalCompraPedido({
   );
 
   const [dropAbierto, setDropAbierto] = useState<
-    null | 'proyecto' | 'proveedor' | 'moneda' | 'estado' | 'comprobante'
+    null | 'proyecto' | 'proveedor' | 'moneda' | 'estado' | 'comprobante' | 'factura_nc'
   >(null);
   const refContenedorForm = useRef<HTMLFormElement>(null);
 
@@ -147,7 +169,7 @@ export default function ModalCompraPedido({
         setValorUsdTexto(numATextoArg(cotizacion));
       }
     } catch {
-      // Mantiene valor actual si no hay respuesta
+      // Mantiene valor actual
     } finally {
       setBuscandoDolar(false);
     }
@@ -157,18 +179,32 @@ export default function ModalCompraPedido({
     if (!abierto) return;
     const hoyIso = new Date().toISOString().split('T')[0];
     setInfoAutoLectura(null);
+    setAlertaDuplicado(null);
     setDropAbierto(null);
+    setFacturaAsociadaId('');
 
-    // Cargar siempre los proveedores actualizados desde Supabase
-    supabase
-      .from('proveedores')
-      .select('id, codigo, nombre, cuit, rubro')
-      .order('nombre', { ascending: true })
-      .then(({ data }) => {
-        if (data && data.length > 0) {
-          setListaProveedores(data);
-        }
-      });
+    Promise.all([
+      supabase
+        .from('proveedores')
+        .select('id, codigo, nombre, cuit, rubro')
+        .order('nombre', { ascending: true }),
+      supabase
+        .from('compras')
+        .select(
+          'id, proyecto_codigo, proyecto_nombre, proveedor, cuit, concepto, nro_orden, tipo_comprobante, fecha, moneda, importe, valor_usd, importe_usd, estado'
+        )
+        .order('fecha', { ascending: false }),
+    ]).then(([resProv, resComp]) => {
+      if (resProv.data && resProv.data.length > 0) {
+        setListaProveedores(resProv.data);
+      }
+      if (Array.isArray(resComp.data)) {
+        const soloFacturas = resComp.data.filter(
+          (c: any) => c.tipo_comprobante !== 'Nota de Crédito'
+        );
+        setFacturasCargadas(soloFacturas);
+      }
+    });
 
     if (compraEditando) {
       setProyectoCodigo(compraEditando.proyecto_codigo || proyectoFijoCodigo || '');
@@ -216,9 +252,68 @@ export default function ModalCompraPedido({
         pr.nombre.toLowerCase().includes(q) ||
         String(pr.cuit || '').toLowerCase().includes(q)
     );
-    // Si escribió o autocompletó un nombre exacto, mostrar igual todos para poder cambiarlo fácil
     return coincidencias.length > 0 ? coincidencias : listaProveedores;
   }, [listaProveedores, proveedor]);
+
+  const facturasDisponiblesNc = useMemo(() => {
+    const provNorm = proveedor.trim().toLowerCase();
+    const filtradas = facturasCargadas.filter((f) => {
+      if (proyectoFijoCodigo && f.proyecto_codigo !== proyectoFijoCodigo) return false;
+      if (
+        provNorm &&
+        provNorm !== 'proveedor general' &&
+        String(f.proveedor || '').toLowerCase() !== provNorm
+      ) {
+        return false;
+      }
+      return true;
+    });
+    return filtradas.length > 0 ? filtradas : facturasCargadas;
+  }, [facturasCargadas, proveedor, proyectoFijoCodigo]);
+
+  const facturaAsociadaObj = useMemo(
+    () => facturasCargadas.find((f) => String(f.id) === String(facturaAsociadaId)) || null,
+    [facturasCargadas, facturaAsociadaId]
+  );
+
+  const seleccionarFacturaParaNc = (fac: any) => {
+    setFacturaAsociadaId(String(fac.id));
+    if (!proyectoFijoCodigo && fac.proyecto_codigo) {
+      setProyectoCodigo(fac.proyecto_codigo);
+    }
+    if (fac.proveedor) setProveedor(fac.proveedor);
+    if (fac.cuit) setCuitProveedor(fac.cuit);
+    const monFac = String(fac.moneda || 'ARS').toUpperCase() === 'USD' ? 'USD' : 'ARS';
+    setMoneda(monFac);
+    if (Number(fac.importe || 0) > 0) {
+      setImporteTexto(numATextoArg(Number(fac.importe)));
+    }
+    if (Number(fac.valor_usd || 0) > 0) {
+      setValorUsdTexto(numATextoArg(Number(fac.valor_usd)));
+    } else if (fac.fecha) {
+      consultarDolarFecha(fac.fecha);
+    }
+    setEstado('Entregado');
+    const refFac = fac.nro_orden || fac.concepto || '';
+    setConcepto(
+      refFac
+        ? `NC s/ Factura ${refFac}${fac.concepto ? ` · ${fac.concepto}` : ''}`
+        : `Nota de Crédito · ${fac.concepto || ''}`
+    );
+    setNotas((prev) =>
+      prev.trim()
+        ? prev
+        : `Corresponde a ${fac.tipo_comprobante || 'Factura'} N° ${fac.nro_orden || 'S/N'} (${
+            fac.fecha ? fac.fecha.split('-').reverse().join('/') : ''
+          })`
+    );
+    setDropAbierto(null);
+    setInfoAutoLectura(
+      `Datos cargados desde ${fac.tipo_comprobante || 'Factura'} ${fac.nro_orden || ''} (${
+        fac.proveedor || ''
+      })`
+    );
+  };
 
   const equivalenteUsdCalculado = useMemo(() => {
     const imp = parsearNum(importeTexto);
@@ -228,13 +323,64 @@ export default function ModalCompraPedido({
     return Math.round((imp / cot) * 100) / 100;
   }, [importeTexto, valorUsdTexto, moneda]);
 
+  const esNotaCredito = tipoComprobante === 'Nota de Crédito';
+
+  // Fecha que corresponde al tipo de cambio BNA mostrado (si hay factura asociada en NC, usa la fecha de esa factura)
+  const fechaDolarBnaMostrar =
+    esNotaCredito && facturaAsociadaObj?.fecha ? facturaAsociadaObj.fecha : fecha;
+
   if (!abierto || !montado) return null;
+
+  const verificarComprobanteDuplicado = async (
+    nroFactura: string,
+    provNombre: string,
+    cuitProv: string
+  ): Promise<boolean> => {
+    const nroNorm = normalizarNroComprobante(nroFactura);
+    if (!nroNorm) return false;
+
+    const { data: existentes } = await supabase
+      .from('compras')
+      .select('id, nro_orden, proveedor, cuit, proyecto_codigo, tipo_comprobante');
+
+    if (!Array.isArray(existentes)) return false;
+
+    const provNorm = String(provNombre || '').trim().toLowerCase();
+    const cuitNorm = String(cuitProv || '').replace(/\D/g, '');
+
+    const duplicado = existentes.find((item: any) => {
+      if (compraEditando && String(item.id) === String(compraEditando.id)) return false;
+      const itemNro = normalizarNroComprobante(item.nro_orden || '');
+      if (!itemNro || itemNro !== nroNorm) return false;
+
+      const itemProv = String(item.proveedor || '').trim().toLowerCase();
+      const itemCuit = String(item.cuit || '').replace(/\D/g, '');
+      if (cuitNorm && itemCuit) return cuitNorm === itemCuit;
+      if (provNorm && provNorm !== 'proveedor general' && itemProv) {
+        return itemProv === provNorm || itemNro === nroNorm;
+      }
+      return true;
+    });
+
+    if (duplicado) {
+      setAlertaDuplicado({
+        mensaje: 'Este comprobante ya se encuentra registrado en el sistema.',
+        detalle: `${duplicado.proveedor || 'Proveedor'} · N° ${duplicado.nro_orden}${
+          duplicado.proyecto_codigo ? ` (${duplicado.proyecto_codigo})` : ''
+        }`,
+      });
+      return true;
+    }
+
+    return false;
+  };
 
   const procesarArchivoFactura = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
     setSubiendoArchivo(true);
     setInfoAutoLectura(null);
+    setAlertaDuplicado(null);
 
     try {
       const ruta = `compras/${Date.now()}_${file.name.replace(/\s+/g, '_')}`;
@@ -263,15 +409,18 @@ export default function ModalCompraPedido({
 
         if (detectado.nroFactura) {
           setNroOrden(detectado.nroFactura);
-          camposCompletados.push(`Factura ${detectado.nroFactura}`);
+          camposCompletados.push(`Comprobante ${detectado.nroFactura}`);
         }
 
         if (detectado.fechaDetectada) {
           setFecha(detectado.fechaDetectada);
-          await consultarDolarFecha(detectado.fechaDetectada);
+          if (!esNotaCredito || !facturaAsociadaObj?.fecha) {
+            await consultarDolarFecha(detectado.fechaDetectada);
+          }
           camposCompletados.push(`Fecha ${detectado.fechaDetectada.split('-').reverse().join('/')}`);
         }
 
+        let provDetectado = proveedor;
         if (detectado.cuitDetectado) {
           setCuitProveedor(detectado.cuitDetectado);
           const cuitLimpio = detectado.cuitDetectado.replace(/\D/g, '');
@@ -279,15 +428,18 @@ export default function ModalCompraPedido({
             (pr) => String(pr.cuit || '').replace(/\D/g, '') === cuitLimpio
           );
           if (provMatch) {
+            provDetectado = provMatch.nombre;
             setProveedor(provMatch.nombre);
             camposCompletados.push(`Proveedor ${provMatch.nombre}`);
           } else {
             if (detectado.proveedorSugerido && !proveedor) {
+              provDetectado = detectado.proveedorSugerido;
               setProveedor(detectado.proveedorSugerido);
             }
             camposCompletados.push(`CUIT ${detectado.cuitDetectado}`);
           }
         } else if (detectado.proveedorSugerido && !proveedor) {
+          provDetectado = detectado.proveedorSugerido;
           setProveedor(detectado.proveedorSugerido);
           camposCompletados.push(`Proveedor ${detectado.proveedorSugerido}`);
         }
@@ -299,6 +451,14 @@ export default function ModalCompraPedido({
 
         if (detectado.monedaDetectada) {
           setMoneda(detectado.monedaDetectada);
+        }
+
+        if (detectado.nroFactura) {
+          await verificarComprobanteDuplicado(
+            detectado.nroFactura,
+            provDetectado,
+            detectado.cuitDetectado || cuitProveedor
+          );
         }
 
         if (camposCompletados.length > 0) {
@@ -322,13 +482,34 @@ export default function ModalCompraPedido({
     e.preventDefault();
     if (cargando) return;
     setCargando(true);
+    setAlertaDuplicado(null);
 
     try {
+      const proveedorFinal = proveedor.trim() || 'Proveedor general';
+
+      const yaExiste = await verificarComprobanteDuplicado(
+        nroOrden,
+        proveedorFinal,
+        cuitProveedor
+      );
+      if (yaExiste) {
+        setCargando(false);
+        return;
+      }
+
       const imp = parsearNum(importeTexto);
       const cot = parsearNum(valorUsdTexto) || 1450;
       const impUsd = moneda === 'USD' ? imp : Math.round((imp / cot) * 100) / 100;
       const proy = proyectos.find((p) => p.codigo === proyectoCodigo);
-      const proveedorFinal = proveedor.trim() || 'Proveedor general';
+
+      const notaFinal =
+        esNotaCredito && facturaAsociadaObj
+          ? `${
+              notas.trim()
+                ? `${notas.trim()} · `
+                : ''
+            }[Aplica a Factura ${facturaAsociadaObj.nro_orden || facturaAsociadaObj.concepto}]`
+          : notas.trim() || null;
 
       const payload: Record<string, any> = {
         proyecto_codigo: proy?.codigo || proyectoCodigo || null,
@@ -345,7 +526,7 @@ export default function ModalCompraPedido({
         importe_usd: impUsd,
         estado,
         archivo_url: archivoUrl.trim() || null,
-        notas: notas.trim() || null,
+        notas: notaFinal,
       };
 
       if (compraEditando) {
@@ -363,33 +544,15 @@ export default function ModalCompraPedido({
           alert('Error al guardar compra: ' + error.message);
           return;
         }
-
-        await supabase.from('movimientos').insert([
-          {
-            tipo: 'Egreso',
-            proyecto_codigo: proy?.codigo || proyectoCodigo || null,
-            proyecto_nombre: proy?.nombre || null,
-            categoria: 'Compras / Materiales',
-            concepto: `${proveedorFinal} · ${concepto.trim()}`,
-            moneda,
-            importe: imp,
-            monto: imp,
-            valor_usd: cot,
-            importe_usd: impUsd,
-            fecha,
-            estado: estado === 'Pendiente de pago' ? 'Resta abonar' : 'Abonado',
-            tipo_comprobante: tipoComprobante,
-            comprobante: nroOrden.trim() || null,
-            archivo_url: archivoUrl.trim() || null,
-          },
-        ]);
       }
 
       onClose();
       onGuardado(
         compraEditando
           ? 'Compra actualizada correctamente'
-          : 'Compra registrada y vinculada a Finanzas'
+          : tipoComprobante === 'Nota de Crédito'
+          ? 'Nota de Crédito registrada como Ingreso en Finanzas'
+          : 'Compra registrada como Egreso en Finanzas'
       );
     } catch (err: any) {
       alert('Error inesperado: ' + (err?.message || 'Sin conexión'));
@@ -422,6 +585,39 @@ export default function ModalCompraPedido({
     <>
       {createPortal(
         <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-[9999] p-4 backdrop-blur-sm">
+          {/* CARTEL FLOTANTE DE COMPROBANTE DUPLICADO */}
+          {alertaDuplicado && (
+            <div className="fixed top-6 right-6 bg-[#1C1C1C] border-2 border-[#D4EE36] shadow-2xl rounded-2xl p-4 w-80 z-[10010] space-y-2.5">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-extrabold text-[#D4EE36] inline-flex items-center gap-1.5">
+                  <AlertTriangle className="w-4 h-4" /> COMPROBANTE DUPLICADO
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setAlertaDuplicado(null)}
+                  className="text-gray-400 hover:text-white cursor-pointer"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+              <div className="text-sm font-extrabold text-white leading-snug">
+                {alertaDuplicado.mensaje}
+              </div>
+              {alertaDuplicado.detalle && (
+                <div className="text-xs text-gray-300">{alertaDuplicado.detalle}</div>
+              )}
+              <div className="pt-1">
+                <button
+                  type="button"
+                  onClick={() => setAlertaDuplicado(null)}
+                  className="w-full py-2 rounded-xl bg-[#D4EE36] hover:bg-[#c3de28] text-black text-xs font-extrabold cursor-pointer"
+                >
+                  Entendido
+                </button>
+              </div>
+            </div>
+          )}
+
           <div className="bg-[#161616] border border-gray-800 rounded-2xl w-full max-w-xl shadow-2xl overflow-hidden flex flex-col max-h-[94vh]">
             {/* ENCABEZADO */}
             <div className="px-6 pt-5 pb-4 border-b border-gray-800/80 flex justify-between items-start">
@@ -606,7 +802,188 @@ export default function ModalCompraPedido({
                 </div>
               </div>
 
-              {/* 3. CONCEPTO DEL PEDIDO */}
+              {/* 3. FECHA + NRO. ORDEN / FACTURA + TIPO DE COMPROBANTE */}
+              <div
+                className={`grid grid-cols-3 gap-3 relative ${
+                  dropAbierto === 'comprobante' ? 'z-[200]' : 'z-25'
+                }`}
+              >
+                <div>
+                  <label className="block text-xs font-bold text-gray-200 mb-1.5">Fecha</label>
+                  <input
+                    type="date"
+                    value={fecha}
+                    onChange={(e) => {
+                      const nuevaFecha = e.target.value;
+                      setFecha(nuevaFecha);
+                      if (nuevaFecha && (!esNotaCredito || !facturaAsociadaObj?.fecha)) {
+                        consultarDolarFecha(nuevaFecha);
+                      }
+                    }}
+                    className="w-full bg-[#1C1C1C] border border-gray-700 rounded-xl px-3 py-2 text-xs text-white [color-scheme:dark]"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-gray-200 mb-1.5">
+                    {esNotaCredito ? 'Nro. Nota de Crédito' : 'Nro. Orden / Factura'}
+                  </label>
+                  <input
+                    type="text"
+                    value={nroOrden}
+                    onChange={(e) => {
+                      setNroOrden(e.target.value);
+                      if (alertaDuplicado) setAlertaDuplicado(null);
+                    }}
+                    onBlur={() => {
+                      if (nroOrden.trim()) {
+                        verificarComprobanteDuplicado(nroOrden, proveedor, cuitProveedor);
+                      }
+                    }}
+                    placeholder="Ej. 00008-00003474"
+                    className={`w-full bg-[#1C1C1C] border rounded-xl px-3 py-2 text-xs text-white ${
+                      alertaDuplicado ? 'border-[#D4EE36]' : 'border-gray-700'
+                    }`}
+                  />
+                </div>
+
+                <div className="relative">
+                  <label className="block text-xs font-bold text-gray-200 mb-1.5">
+                    Tipo de Comprobante
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setDropAbierto((prev) => (prev === 'comprobante' ? null : 'comprobante'))
+                    }
+                    className="w-full bg-[#1C1C1C] border border-gray-700 rounded-xl px-3 py-2 text-xs font-bold text-white flex items-center justify-between cursor-pointer"
+                  >
+                    <span className="truncate">{tipoComprobante}</span>
+                    <ChevronDown className="w-4 h-4 text-gray-400 flex-shrink-0" />
+                  </button>
+                  {dropAbierto === 'comprobante' && (
+                    <div className="absolute left-0 right-0 mt-1.5 bg-[#1C1C1C] border border-gray-700 rounded-2xl shadow-2xl py-1.5 z-[210] max-h-56 overflow-y-auto">
+                      {OPCIONES_COMPROBANTE.map((tc) => (
+                        <button
+                          key={tc}
+                          type="button"
+                          onClick={() => {
+                            setTipoComprobante(tc);
+                            if (tc !== 'Nota de Crédito') {
+                              setFacturaAsociadaId('');
+                            }
+                            setDropAbierto(null);
+                          }}
+                          className={`w-full px-4 py-2 text-left text-xs font-bold hover:bg-white/5 cursor-pointer ${
+                            tc === 'Nota de Crédito' ? 'text-emerald-400' : 'text-white'
+                          }`}
+                        >
+                          {tc}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* SELECTOR DE FACTURA ASOCIADA (SOLO CUANDO SE ELIGE NOTA DE CRÉDITO) */}
+              {esNotaCredito && (
+                <div
+                  className={`bg-emerald-950/25 border border-emerald-700/50 rounded-2xl p-3.5 relative ${
+                    dropAbierto === 'factura_nc' ? 'z-[200]' : 'z-20'
+                  }`}
+                >
+                  <label className="block text-xs font-extrabold text-emerald-300 mb-1.5 flex items-center gap-1.5">
+                    <FileCheck2 className="w-3.5 h-3.5" />
+                    Factura cargada a la que corresponde esta Nota de Crédito
+                  </label>
+
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setDropAbierto((prev) => (prev === 'factura_nc' ? null : 'factura_nc'))
+                    }
+                    className="w-full bg-[#161616] border border-emerald-700/60 hover:border-emerald-500 rounded-xl px-3.5 py-2.5 text-left flex items-center justify-between gap-2 cursor-pointer"
+                  >
+                    {facturaAsociadaObj ? (
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center gap-2 text-xs font-extrabold text-white">
+                          <span className="text-emerald-400">
+                            {facturaAsociadaObj.nro_orden || 'S/N'}
+                          </span>
+                          <span>·</span>
+                          <span className="truncate">{facturaAsociadaObj.proveedor}</span>
+                          {facturaAsociadaObj.fecha && (
+                            <span className="text-[11px] font-semibold text-gray-400">
+                              ({facturaAsociadaObj.fecha.split('-').reverse().join('/')})
+                            </span>
+                          )}
+                        </div>
+                        <div className="text-[11px] text-gray-300 truncate mt-0.5">
+                          {facturaAsociadaObj.concepto} · {facturaAsociadaObj.moneda || 'ARS'} $
+                          {Number(facturaAsociadaObj.importe || 0).toLocaleString('es-AR', {
+                            minimumFractionDigits: 2,
+                            maximumFractionDigits: 2,
+                          })}
+                        </div>
+                      </div>
+                    ) : (
+                      <span className="text-xs text-gray-300">
+                        Seleccioná una factura de la lista ({facturasDisponiblesNc.length} disponibles)...
+                      </span>
+                    )}
+                    <ChevronDown className="w-4 h-4 text-emerald-400 flex-shrink-0" />
+                  </button>
+
+                  {dropAbierto === 'factura_nc' && (
+                    <div className="absolute left-3.5 right-3.5 mt-1.5 bg-[#1A1A1A] border border-emerald-700/70 rounded-2xl shadow-2xl py-2 z-[210] max-h-60 overflow-y-auto">
+                      {facturasDisponiblesNc.length === 0 ? (
+                        <div className="px-4 py-3 text-xs text-gray-400">
+                          No hay facturas cargadas para seleccionar.
+                        </div>
+                      ) : (
+                        facturasDisponiblesNc.map((fac) => (
+                          <button
+                            key={fac.id}
+                            type="button"
+                            onClick={() => seleccionarFacturaParaNc(fac)}
+                            className="w-full px-4 py-2.5 text-left hover:bg-emerald-950/50 border-b border-white/5 last:border-b-0 cursor-pointer flex items-center justify-between gap-3"
+                          >
+                            <div className="min-w-0">
+                              <div className="flex items-center gap-2">
+                                <span className="text-[11px] font-extrabold text-emerald-400">
+                                  {fac.nro_orden || 'S/N'}
+                                </span>
+                                <span className="text-xs font-bold text-white truncate">
+                                  {fac.proveedor}
+                                </span>
+                                {fac.proyecto_codigo && (
+                                  <span className="text-[10px] px-1.5 py-0.2 rounded bg-[#EAB308]/15 text-[#EAB308] font-bold">
+                                    {fac.proyecto_codigo}
+                                  </span>
+                                )}
+                              </div>
+                              <div className="text-[11px] text-gray-400 truncate mt-0.5">
+                                {fac.fecha ? fac.fecha.split('-').reverse().join('/') : '—'} ·{' '}
+                                {fac.concepto}
+                              </div>
+                            </div>
+                            <div className="text-xs font-extrabold text-white flex-shrink-0">
+                              {fac.moneda || 'ARS'} $
+                              {Number(fac.importe || 0).toLocaleString('es-AR', {
+                                minimumFractionDigits: 2,
+                                maximumFractionDigits: 2,
+                              })}
+                            </div>
+                          </button>
+                        ))
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* 4. CONCEPTO DEL PEDIDO */}
               <div className="relative z-10">
                 <label className="block text-xs font-bold text-gray-200 mb-1.5">
                   Concepto del Pedido <span className="text-[#EAB308]">*</span>
@@ -621,10 +998,10 @@ export default function ModalCompraPedido({
                 />
               </div>
 
-              {/* 4. MONEDA + SUBTOTAL / IMPORTE + ESTADO */}
+              {/* 5. MONEDA + SUBTOTAL / IMPORTE + ESTADO */}
               <div
                 className={`grid grid-cols-3 gap-3 relative ${
-                  dropAbierto === 'moneda' || dropAbierto === 'estado' ? 'z-[200]' : 'z-20'
+                  dropAbierto === 'moneda' || dropAbierto === 'estado' ? 'z-[200]' : 'z-15'
                 }`}
               >
                 <div className="relative">
@@ -706,11 +1083,11 @@ export default function ModalCompraPedido({
                 </div>
               </div>
 
-              {/* 5. COTIZACIÓN AUTOMÁTICA DÓLAR DE LA FECHA + EQUIVALENTE USD */}
+              {/* 6. COTIZACIÓN AUTOMÁTICA DÓLAR DE LA FECHA (USA FECHA DE FACTURA EN NOTA DE CRÉDITO) */}
               <div className="bg-[#1C1C1C] border border-gray-800 rounded-xl px-3.5 py-2.5 flex flex-wrap items-center justify-between gap-2 text-xs relative z-10">
                 <div className="flex items-center gap-2">
                   <span className="text-gray-400">
-                    Dólar BNA ({fecha.split('-').reverse().join('/')}):
+                    Dólar BNA ({fechaDolarBnaMostrar.split('-').reverse().join('/')}):
                   </span>
                   <input
                     type="text"
@@ -720,7 +1097,7 @@ export default function ModalCompraPedido({
                   />
                   <button
                     type="button"
-                    onClick={() => consultarDolarFecha(fecha)}
+                    onClick={() => consultarDolarFecha(fechaDolarBnaMostrar)}
                     title="Actualizar cotización BNA de la fecha"
                     className="text-[#EAB308] hover:opacity-80 cursor-pointer"
                   >
@@ -729,7 +1106,7 @@ export default function ModalCompraPedido({
                 </div>
 
                 <div className="font-extrabold text-[#EAB308]">
-                  Equivalente: USD $
+                  Equivalente: {esNotaCredito ? '+' : ''}USD $
                   {equivalenteUsdCalculado.toLocaleString('es-AR', {
                     minimumFractionDigits: 2,
                     maximumFractionDigits: 2,
@@ -737,86 +1114,25 @@ export default function ModalCompraPedido({
                 </div>
               </div>
 
-              <p className="text-[11px] text-gray-400 -mt-2 relative z-10">
-                Esta compra se registra automáticamente como Egreso en Finanzas y en el balance del proyecto.
-              </p>
-
-              {/* 6. FECHA + NRO. ORDEN / FACTURA + TIPO DE COMPROBANTE */}
-              <div
-                className={`grid grid-cols-3 gap-3 relative ${
-                  dropAbierto === 'comprobante' ? 'z-[200]' : 'z-20'
+              <p
+                className={`text-[11px] -mt-2 relative z-10 ${
+                  esNotaCredito ? 'text-emerald-400 font-semibold' : 'text-gray-400'
                 }`}
               >
-                <div>
-                  <label className="block text-xs font-bold text-gray-200 mb-1.5">Fecha</label>
-                  <input
-                    type="date"
-                    value={fecha}
-                    onChange={(e) => {
-                      const nuevaFecha = e.target.value;
-                      setFecha(nuevaFecha);
-                      if (nuevaFecha) consultarDolarFecha(nuevaFecha);
-                    }}
-                    className="w-full bg-[#1C1C1C] border border-gray-700 rounded-xl px-3 py-2 text-xs text-white [color-scheme:dark]"
-                  />
-                </div>
+                {esNotaCredito
+                  ? 'Esta Nota de Crédito se registra automáticamente como Ingreso en Finanzas (anula/descuenta el egreso).'
+                  : 'Esta compra se registra automáticamente como Egreso en Finanzas y en el balance del proyecto.'}
+              </p>
 
-                <div>
-                  <label className="block text-xs font-bold text-gray-200 mb-1.5">
-                    Nro. Orden / Factura
-                  </label>
-                  <input
-                    type="text"
-                    value={nroOrden}
-                    onChange={(e) => setNroOrden(e.target.value)}
-                    placeholder="Ej. OC-2026-084"
-                    className="w-full bg-[#1C1C1C] border border-gray-700 rounded-xl px-3 py-2 text-xs text-white"
-                  />
-                </div>
-
-                <div className="relative">
-                  <label className="block text-xs font-bold text-gray-200 mb-1.5">
-                    Tipo de Comprobante
-                  </label>
-                  <button
-                    type="button"
-                    onClick={() =>
-                      setDropAbierto((prev) => (prev === 'comprobante' ? null : 'comprobante'))
-                    }
-                    className="w-full bg-[#1C1C1C] border border-gray-700 rounded-xl px-3 py-2 text-xs font-bold text-white flex items-center justify-between cursor-pointer"
-                  >
-                    <span className="truncate">{tipoComprobante}</span>
-                    <ChevronDown className="w-4 h-4 text-gray-400 flex-shrink-0" />
-                  </button>
-                  {dropAbierto === 'comprobante' && (
-                    <div className="absolute left-0 right-0 mt-1.5 bg-[#1C1C1C] border border-gray-700 rounded-2xl shadow-2xl py-1.5 z-[210]">
-                      {OPCIONES_COMPROBANTE.map((tc) => (
-                        <button
-                          key={tc}
-                          type="button"
-                          onClick={() => {
-                            setTipoComprobante(tc);
-                            setDropAbierto(null);
-                          }}
-                          className="w-full px-4 py-2 text-left text-xs font-bold text-white hover:bg-white/5 cursor-pointer"
-                        >
-                          {tc}
-                        </button>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              </div>
-
-              {/* 7. COMPROBANTE ADJUNTO (FACTURA) */}
+              {/* 7. COMPROBANTE ADJUNTO (FACTURA / NC) */}
               <div className="bg-[#1C1C1C] border border-gray-800 rounded-2xl p-4 space-y-3 relative z-10">
                 <div>
                   <div className="text-xs font-bold text-white flex items-center gap-1.5">
                     <Paperclip className="w-3.5 h-3.5 text-[#EAB308]" />
-                    Comprobante Adjunto (Factura)
+                    Comprobante Adjunto ({esNotaCredito ? 'Nota de Crédito' : 'Factura'})
                   </div>
                   <p className="text-[11px] text-gray-400 mt-0.5">
-                    Subí un archivo desde tu dispositivo (autocompleta subtotal, factura, CUIT y fecha) o pegá abajo un enlace externo.
+                    Subí un archivo desde tu dispositivo (autocompleta subtotal, comprobante, CUIT y fecha) o pegá abajo un enlace externo.
                   </p>
                 </div>
 
@@ -828,7 +1144,7 @@ export default function ModalCompraPedido({
                   )}
                   <span className="text-xs font-extrabold text-[#EAB308]">
                     {subiendoArchivo
-                      ? 'Analizando y subiendo factura...'
+                      ? 'Analizando y subiendo comprobante...'
                       : 'Hacé clic aquí para adjuntar un archivo (PDF, imagen, plano, planilla)'}
                   </span>
                   <span className="text-[11px] text-gray-400 mt-1">

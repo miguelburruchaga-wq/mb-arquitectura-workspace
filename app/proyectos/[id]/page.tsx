@@ -1,31 +1,42 @@
-import { Suspense } from 'react';
-import Link from 'next/link';
 import { supabase } from '@/lib/supabase';
-import { AlertTriangle } from 'lucide-react';
 import FichaProyectoClient from '@/components/FichaProyectoClient';
+import Link from 'next/link';
 
-async function ContenidoFichaProyecto({ params }: { params: Promise<{ id: string }> }) {
-  const { id } = await params;
-  const proyectoCodigo = decodeURIComponent(id);
+export const dynamic = 'force-dynamic';
 
-  const { data: proyecto, error } = await supabase
+export default async function PaginaFichaProyecto({
+  params,
+}: {
+  params: Promise<{ id: string }>;
+}) {
+  const resolvedParams = await params;
+  const identificador = decodeURIComponent(String(resolvedParams?.id || '')).trim();
+
+  // Buscar proyecto por código (OBR-2026-04) o por id numérico
+  let { data: proyecto } = await supabase
     .from('proyectos')
     .select('*')
-    .eq('codigo', proyectoCodigo)
-    .limit(1)
-    .single();
+    .eq('codigo', identificador)
+    .maybeSingle();
 
-  if (error || !proyecto) {
+  if (!proyecto && /^\d+$/.test(identificador)) {
+    const resId = await supabase
+      .from('proyectos')
+      .select('*')
+      .eq('id', Number(identificador))
+      .maybeSingle();
+    proyecto = resId.data;
+  }
+
+  if (!proyecto) {
     return (
-      <div className="min-h-screen bg-[#121212] text-white p-8 flex flex-col items-center justify-center text-center">
-        <AlertTriangle className="w-16 h-16 text-[#EAB308] mb-4" />
-        <h1 className="text-3xl font-bold text-white mb-2">Proyecto no encontrado</h1>
-        <p className="text-gray-400 mb-6">
-          No encontramos ningún proyecto con el código <strong>{proyectoCodigo}</strong>.
+      <div className="min-h-screen bg-[#121212] text-white p-8 flex flex-col items-center justify-center gap-4">
+        <p className="text-sm text-gray-400">
+          No se encontró el proyecto solicitado ({identificador}).
         </p>
         <Link
           href="/proyectos"
-          className="bg-[#1A1A1A] border border-gray-800 hover:bg-gray-800 px-6 py-2.5 rounded-xl font-medium transition-colors"
+          className="bg-[#EAB308] text-black px-4 py-2 rounded-xl text-xs font-bold"
         >
           Volver a Proyectos
         </Link>
@@ -33,94 +44,126 @@ async function ContenidoFichaProyecto({ params }: { params: Promise<{ id: string
     );
   }
 
-  const etiquetaProyecto = `${proyecto.codigo} · ${proyecto.nombre}`;
+  const codigoProy = proyecto.codigo;
 
   const [
     { data: clientes },
-    { data: todosMovimientos },
+    { data: movimientosRaw },
     { data: visitas },
     { data: tareas },
-    { data: compras },
+    { data: comprasRaw },
     { data: proveedores },
     { data: equipo },
     { data: documentos },
   ] = await Promise.all([
-    supabase
-      .from('clientes')
-      .select('id, codigo, nombre, tipo, estado')
-      .order('nombre', { ascending: true }),
+    supabase.from('clientes').select('*').order('nombre', { ascending: true }),
     supabase
       .from('movimientos')
       .select('*')
-      .order('fecha', { ascending: false })
-      .order('created_at', { ascending: false }),
+      .eq('proyecto_codigo', codigoProy)
+      .order('fecha', { ascending: false }),
     supabase
       .from('visitas')
       .select('*')
-      .eq('proyecto_codigo', proyecto.codigo)
-      .order('fecha', { ascending: true }),
+      .eq('proyecto_codigo', codigoProy)
+      .order('fecha', { ascending: false }),
     supabase
       .from('tareas')
       .select('*')
-      .eq('proyecto_codigo', proyecto.codigo)
-      .order('created_at', { ascending: false }),
+      .eq('proyecto_codigo', codigoProy)
+      .order('fecha_vencimiento', { ascending: true }),
     supabase
       .from('compras')
-      .select('*')
-      .eq('proyecto_codigo', proyecto.codigo)
-      .order('created_at', { ascending: false }),
-    supabase
-      .from('proveedores')
-      .select('id, codigo, nombre, rubro')
-      .order('nombre', { ascending: true }),
-    supabase.from('equipo').select('*').order('id', { ascending: true }),
+      .select(
+        'id, proyecto_codigo, proyecto_nombre, proveedor, concepto, nro_orden, tipo_comprobante, fecha, moneda, importe, valor_usd, importe_usd, estado'
+      )
+      .order('fecha', { ascending: false }),
+    supabase.from('proveedores').select('*').order('nombre', { ascending: true }),
+    supabase.from('equipo').select('*').order('nombre', { ascending: true }),
     supabase
       .from('documentos')
       .select('*')
-      .eq('proyecto_codigo', proyecto.codigo)
-      .order('fecha_emision', { ascending: false })
+      .eq('proyecto_codigo', codigoProy)
       .order('created_at', { ascending: false }),
   ]);
 
-  const movimientosProyecto = (todosMovimientos || []).filter((m) => {
-    const porProyecto =
-      m.proyecto_codigo === proyecto.codigo ||
-      m.proyecto === etiquetaProyecto ||
-      m.proyecto === proyecto.nombre ||
-      m.proyecto === proyecto.codigo;
-    const porCliente = proyecto.cliente_id && String(m.cliente_id) === String(proyecto.cliente_id);
-    return porProyecto || porCliente;
-  });
+  const movsDb = movimientosRaw || [];
+  const comprasDb = comprasRaw || [];
+
+  // Evitar duplicados si alguna compra ya estaba guardada manualmente en movimientos
+  const nrosEnMovimientos = new Set(
+    movsDb
+      .map((m: any) => String(m.comprobante || '').trim().toLowerCase())
+      .filter(Boolean)
+  );
+  const conceptosEnMovimientos = new Set(
+    movsDb
+      .map((m: any) => String(m.concepto || '').trim().toLowerCase())
+      .filter(Boolean)
+  );
+
+  // Convertir automáticamente cada compra del proyecto en un movimiento financiero (Egreso o Ingreso si es Nota de Crédito)
+  const comprasComoMovimientos = comprasDb
+    .filter((c: any) => {
+      const nro = String(c.nro_orden || '').trim().toLowerCase();
+      const conc = `${c.proveedor || 'Proveedor'} · ${c.concepto || ''}`
+        .trim()
+        .toLowerCase();
+      if (nro && nrosEnMovimientos.has(nro)) return false;
+      if (conceptosEnMovimientos.has(conc)) return false;
+      return true;
+    })
+    .map((c: any) => {
+      const esNc = c.tipo_comprobante === 'Nota de Crédito';
+      const imp = Number(c.importe || 0);
+      const cot = Number(c.valor_usd || 1450) || 1450;
+      const mon = String(c.moneda || 'ARS').toUpperCase();
+      const impUsd =
+        Number(c.importe_usd || 0) > 0
+          ? Number(c.importe_usd)
+          : mon === 'USD'
+          ? imp
+          : Math.round((imp / cot) * 100) / 100;
+
+      return {
+        id: `compra-${c.id}`,
+        compra_origen_id: c.id,
+        es_desde_compra: true,
+        tipo: esNc ? 'Ingreso' : 'Egreso',
+        proyecto: `${codigoProy} · ${proyecto.nombre}`,
+        proyecto_codigo: codigoProy,
+        proyecto_nombre: proyecto.nombre,
+        categoria: esNc ? 'Nota de Crédito / Devolución' : 'Compras y Materiales de Obra',
+        concepto: `${c.proveedor || 'Proveedor'} · ${c.concepto || ''}`,
+        proveedor: c.proveedor || null,
+        moneda: mon,
+        importe: imp,
+        monto: imp,
+        valor_usd: cot,
+        importe_usd: impUsd,
+        fecha: c.fecha || new Date().toISOString().split('T')[0],
+        estado: c.estado === 'Pendiente de pago' ? 'Resta abonar' : 'Abonado',
+        tipo_comprobante: c.tipo_comprobante || 'Factura',
+        comprobante: c.nro_orden || null,
+        archivo_url: c.archivo_url || null,
+      };
+    });
+
+  const movimientosUnificados = [...movsDb, ...comprasComoMovimientos].sort((a, b) =>
+    String(b.fecha || '').localeCompare(String(a.fecha || ''))
+  );
 
   return (
     <FichaProyectoClient
       proyecto={proyecto}
       clientes={clientes || []}
-      movimientos={movimientosProyecto}
+      movimientos={movimientosUnificados}
       visitas={visitas || []}
       tareas={tareas || []}
-      compras={compras || []}
+      compras={comprasDb}
       proveedores={proveedores || []}
       equipo={equipo || []}
       documentos={documentos || []}
     />
-  );
-}
-export const dynamic = 'force-dynamic';
-export default function FichaProyectoPage({
-  params,
-}: {
-  params: Promise<{ id: string }>;
-}) {
-  return (
-    <Suspense
-      fallback={
-        <div className="min-h-screen bg-[#121212] text-gray-400 p-8">
-          Cargando proyecto...
-        </div>
-      }
-    >
-      <ContenidoFichaProyecto params={params} />
-    </Suspense>
   );
 }

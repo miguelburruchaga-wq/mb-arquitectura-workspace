@@ -1,17 +1,24 @@
-import { Suspense } from 'react';
 import { supabase } from '@/lib/supabase';
 import ComprasClient from '@/components/ComprasClient';
+
 export const dynamic = 'force-dynamic';
-async function ContenidoCompras() {
+
+export default async function PaginaCompras() {
   const [{ data: compras }, { data: proyectos }, { data: proveedores }] = await Promise.all([
-    supabase.from('compras').select('*').order('created_at', { ascending: false }),
+    supabase
+      .from('compras')
+      .select(
+        'id, proyecto_codigo, proyecto_nombre, proveedor, cuit, concepto, nro_orden, tipo_comprobante, fecha, moneda, importe, valor_usd, importe_usd, estado, notas, created_at'
+      )
+      .order('fecha', { ascending: false })
+      .order('created_at', { ascending: false }),
     supabase
       .from('proyectos')
-      .select('id, codigo, nombre, estado, cliente_id')
+      .select('id, codigo, nombre, estado')
       .order('created_at', { ascending: false }),
     supabase
       .from('proveedores')
-      .select('id, codigo, nombre, rubro')
+      .select('id, codigo, nombre, cuit, rubro')
       .order('nombre', { ascending: true }),
   ]);
 
@@ -21,19 +28,5 @@ async function ContenidoCompras() {
       proyectos={proyectos || []}
       proveedores={proveedores || []}
     />
-  );
-}
-
-export default function PaginaCompras() {
-  return (
-    <Suspense
-      fallback={
-        <div className="min-h-screen bg-[#121212] text-gray-400 p-8">
-          Cargando compras...
-        </div>
-      }
-    >
-      <ContenidoCompras />
-    </Suspense>
   );
 }

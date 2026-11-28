@@ -40,6 +40,7 @@ export default function Sidebar() {
   const router = useRouter();
   const [modalAjustesAbierto, setModalAjustesAbierto] = useState(false);
   const [estudioNombre, setEstudioNombre] = useState('MB Arquitectura SA');
+  const [logoEstudio, setLogoEstudio] = useState('/logo-mb.png');
   const [usuario, setUsuario] = useState<{
     nombre: string;
     rol: string;
@@ -62,6 +63,12 @@ export default function Sidebar() {
 
       if (ajustes?.nombreEstudio) {
         setEstudioNombre(ajustes.nombreEstudio);
+      }
+
+      if (ajustes?.logoUrl && String(ajustes.logoUrl).trim() !== '') {
+        setLogoEstudio(ajustes.logoUrl);
+      } else {
+        setLogoEstudio('/logo-mb.png');
       }
 
       if (parsedUser?.nombre) {
@@ -114,8 +121,18 @@ export default function Sidebar() {
       <aside className="w-64 m-3 h-[calc(100vh-1.5rem)] sticky top-3 bg-[#181818] border border-white/10 rounded-[28px] shadow-2xl flex flex-col justify-between p-4 flex-shrink-0 select-none z-30">
         <div className="overflow-y-auto pr-0.5">
           <div className="flex items-center gap-3 px-2 py-2.5 mb-5">
-            <div className="w-10 h-10 rounded-full bg-white text-black font-black text-sm flex items-center justify-center shadow">
-              MB
+            <div className="w-11 h-11 rounded-xl bg-white border border-white/20 p-1 flex items-center justify-center shadow-md overflow-hidden flex-shrink-0">
+              <img
+                src={logoEstudio}
+                alt={estudioNombre}
+                onError={(e) => {
+                  const target = e.currentTarget;
+                  if (target.src !== window.location.origin + '/logo-mb.png') {
+                    target.src = '/logo-mb.png';
+                  }
+                }}
+                className="w-full h-full object-contain"
+              />
             </div>
             <div>
               <div className="text-sm font-extrabold tracking-wide text-white leading-tight">
